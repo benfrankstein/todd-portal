@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { authAPI } from '../services/api';
 import FirstTimePasswordReset from '../components/FirstTimePasswordReset';
 import PhoneVerification from '../components/PhoneVerification';
@@ -20,6 +21,7 @@ function LoginPage() {
 
   const navigate = useNavigate();
   const passwordInputRef = useRef(null);
+  const auth = useAuth();
 
   const handleChange = (e) => {
     setFormData({
@@ -105,10 +107,10 @@ function LoginPage() {
   };
 
   const handlePhoneVerificationSuccess = () => {
-    // After successful phone verification, save user and redirect
+    // After successful phone verification, save user and force reload
+    // This allows AuthContext to pick up the user from localStorage and handle routing
     localStorage.setItem('user', JSON.stringify(loggedInUser));
-    // Use navigate instead of window.location to avoid full page reload
-    navigate(loggedInUser.role === 'admin' ? '/admin' : '/dashboard');
+    window.location.href = '/';
   };
 
   return (
