@@ -107,7 +107,8 @@ function LoginPage() {
   const handlePhoneVerificationSuccess = () => {
     // After successful phone verification, save user and redirect
     localStorage.setItem('user', JSON.stringify(loggedInUser));
-    window.location.href = loggedInUser.role === 'admin' ? '/admin' : '/dashboard';
+    // Use navigate instead of window.location to avoid full page reload
+    navigate(loggedInUser.role === 'admin' ? '/admin' : '/dashboard');
   };
 
   return (
