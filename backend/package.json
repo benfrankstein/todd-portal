@@ -1,0 +1,41 @@
+{
+  "name": "coastal-lending-backend",
+  "version": "1.0.0",
+  "description": "Backend for Coastal Private Lending Portal",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "jest",
+    "db:migrate": "sequelize-cli db:migrate",
+    "db:migrate:undo": "sequelize-cli db:migrate:undo",
+    "db:seed": "sequelize-cli db:seed:all"
+  },
+  "keywords": [
+    "lending",
+    "api",
+    "nodejs"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "aws-sdk": "^2.1692.0",
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.18.2",
+    "googleapis": "^165.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.0.3",
+    "nodemailer": "^7.0.11",
+    "pg": "^8.16.3",
+    "puppeteer": "^24.30.0",
+    "sequelize": "^6.37.7",
+    "sequelize-cli": "^6.6.3",
+    "twilio": "^5.10.5"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.2"
+  }
+}

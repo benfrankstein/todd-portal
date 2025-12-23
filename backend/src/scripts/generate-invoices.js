@@ -1,0 +1,1235 @@
+#!/usr/bin/env node
+/**
+ * Coastal Private Lending - Monthly Invoice Generator (Node.js)
+ * Generates invoice PDFs for all businesses and investors and uploads to S3
+ */
+
+const path = require('path');
+
+// Load environment variables
+require('dotenv').config({ path: path.join(__dirname, '../../.env') });
+
+const puppeteer = require('puppeteer');
+const AWS = require('aws-sdk');
+const db = require('../models');
+const fs = require('fs').promises;
+const { sendInvoiceEmail } = require('../services/emailService');
+
+// AWS S3 Configuration
+const s3 = new AWS.S3({
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  region: process.env.AWS_REGION || 'us-east-2',
+  signatureVersion: 'v4'
+});
+
+const S3_BUCKET = process.env.S3_BUCKET_NAME || 'coastal-lending-invoices';
+
+/**
+ * Get all users by business name and role (returns full user objects)
+ */
+async function getUserEmails(businessName, role) {
+  try {
+    // Map invoice roles to user roles
+    const roleMap = {
+      'client': ['client', 'borrower'],
+      'investor': ['promissory'],
+      'capinvestor': ['capinvestor']
+    };
+
+    const userRoles = roleMap[role] || [role];
+
+    // Find ALL users with matching business name and role
+    const users = await db.User.findAll({
+      where: {
+        businessName: businessName,
+        role: {
+          [db.Sequelize.Op.in]: userRoles
+        },
+        isActive: true,
+        email: { [db.Sequelize.Op.ne]: null } // Only users with emails
+      },
+      attributes: ['email', 'firstName', 'lastName', 'businessName', 'role']
+    });
+
+    // Return full user objects
+    return users;
+  } catch (error) {
+    console.error(`Error fetching emails for ${businessName}:`, error.message);
+    return [];
+  }
+}
+
+/**
+ * Generate file name for invoice PDF
+ */
+function generateFileName(businessName, invoiceDate) {
+  const cleanName = businessName.replace(/[\s\/\\]/g, '_');
+  const dateStr = invoiceDate.toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric'
+  }).replace(/,/g, '').replace(/\s+/g, '_');
+  return `${cleanName}_${dateStr}.pdf`;
+}
+
+/**
+ * Generate S3 key (path) for the invoice
+ */
+function generateS3Key(role, businessName, fileName) {
+  const folderMap = {
+    'client': 'clients',
+    'investor': 'investors',
+    'capinvestor': 'capinvestors'
+  };
+  const folder = folderMap[role] || role;
+  const cleanBusinessName = businessName.replace(/[\s\/\\]/g, '_');
+  return `invoices/${folder}/${cleanBusinessName}/${fileName}`;
+}
+
+/**
+ * Upload PDF to S3
+ */
+async function uploadToS3(pdfBuffer, s3Key) {
+  const params = {
+    Bucket: S3_BUCKET,
+    Key: s3Key,
+    Body: pdfBuffer,
+    ContentType: 'application/pdf',
+    ServerSideEncryption: 'AES256'
+  };
+
+  await s3.putObject(params).promise();
+  return `https://${S3_BUCKET}.s3.amazonaws.com/${s3Key}`;
+}
+
+/**
+ * Generate HTML for invoice
+ */
+function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase64) {
+  // Calculate totals
+  let totalInvested = 0;
+  let monthlyInterest = 0;
+  let totalInterestDue = 0;
+
+  if (role === 'client') {
+    totalInterestDue = records.reduce((sum, r) => sum + (parseFloat(r.interestPayment) || 0), 0);
+  } else if (role === 'investor') {
+    totalInvested = records.reduce((sum, r) => sum + (parseFloat(r.loanAmount) || 0), 0);
+    monthlyInterest = records.reduce((sum, r) => sum + (parseFloat(r.capitalPay) || 0), 0);
+  } else if (role === 'capinvestor') {
+    totalInvested = records.reduce((sum, r) => sum + (parseFloat(r.loanAmount) || 0), 0);
+    monthlyInterest = records.reduce((sum, r) => sum + (parseFloat(r.payment) || 0), 0);
+  }
+
+  // Format currency
+  const formatCurrency = (val) => `$${parseFloat(val || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formatPercent = (val) => `${parseFloat(val || 0).toFixed(2)}%`;
+  const formatDate = (val) => {
+    if (!val) return 'N/A';
+    const date = new Date(val);
+    return date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+  };
+
+  // Don't manually split records - let browser handle page breaks naturally
+  // Put all records in a single container and CSS will handle pagination
+  const pages = [records];
+
+  const formattedDate = invoiceDate.toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric'
+  });
+
+  // Generate table columns based on role
+  let tableHeaders = '';
+  let tableRows = (pageRecords) => '';
+
+  if (role === 'capinvestor') {
+    tableHeaders = `
+      <th>Property Address</th>
+      <th>Loan Amount</th>
+      <th>Interest Rate</th>
+      <th>Interest Earned</th>
+    `;
+    tableRows = (pageRecords) => pageRecords.map((record, idx) => `
+      <tr class="${idx % 2 === 0 ? 'row-even' : 'row-odd'}">
+        <td>${record.propertyAddress || 'No Address'}</td>
+        <td>${formatCurrency(record.loanAmount)}</td>
+        <td>${formatPercent(record.interestRate)}</td>
+        <td>${formatCurrency(record.payment)}</td>
+      </tr>
+    `).join('');
+  } else if (role === 'investor') {
+    tableHeaders = `
+      <th>Date Funded</th>
+      <th>Loan Amount</th>
+      <th>Interest Rate</th>
+      <th>Interest Earned</th>
+    `;
+    tableRows = (pageRecords) => pageRecords.map((record, idx) => `
+      <tr class="${idx % 2 === 0 ? 'row-even' : 'row-odd'}">
+        <td>${formatDate(record.fundDate)}</td>
+        <td>${formatCurrency(record.loanAmount)}</td>
+        <td>${formatPercent(record.interestRate)}</td>
+        <td>${formatCurrency(record.capitalPay)}</td>
+      </tr>
+    `).join('');
+  } else {
+    tableHeaders = `
+      <th>Property Address</th>
+      <th>Loan Amount</th>
+      <th>Interest Rate</th>
+      <th>Interest Payment</th>
+    `;
+    tableRows = (pageRecords) => pageRecords.map((record, idx) => `
+      <tr class="${idx % 2 === 0 ? 'row-even' : 'row-odd'}">
+        <td>${record.projectAddress || 'No Address'}</td>
+        <td>${formatCurrency(record.loanAmount)}</td>
+        <td>${formatPercent(record.interestRate)}</td>
+        <td>${formatCurrency(record.interestPayment)}</td>
+      </tr>
+    `).join('');
+  }
+
+  // Generate HTML with all pages
+  const pagesHTML = pages.map((pageRecords, pageIndex) => `
+    <div class="invoice-page ${pageIndex > 0 ? 'invoice-page-continuation' : ''}">
+      ${pageIndex === 0 ? `
+        <!-- Header (only on first page) -->
+        <div class="invoice-header-premium">
+          <div class="invoice-logo-container">
+            ${logoBase64 ? `<img src="data:image/png;base64,${logoBase64}" alt="Coastal Private Lending" class="invoice-logo-image" />` : ''}
+            <div class="statement-title">Loan Invoice</div>
+          </div>
+          <div class="invoice-date-box">
+            <div class="date-label">Date</div>
+            <div class="date-value">${formattedDate}</div>
+          </div>
+        </div>
+
+        <!-- Bill To and Account Summary -->
+        <div class="invoice-two-column">
+          <div class="invoice-section">
+            <div class="section-title">BILL TO</div>
+            <div class="bill-to-content">${businessName}</div>
+          </div>
+
+          <div class="invoice-section account-summary-simple">
+            <div class="section-title">ACCOUNT SUMMARY</div>
+            ${role === 'client' ? `
+              <div class="summary-simple-row">
+                <span class="summary-simple-label">Total Interest Due</span>
+                <span class="summary-simple-value">${formatCurrency(totalInterestDue)}</span>
+              </div>
+            ` : `
+              <div class="summary-simple-row">
+                <span class="summary-simple-label">Total Amount Invested</span>
+                <span class="summary-simple-value">${formatCurrency(totalInvested)}</span>
+              </div>
+              <div class="summary-simple-row">
+                <span class="summary-simple-label">Monthly Interest Earned</span>
+                <span class="summary-simple-value">${formatCurrency(monthlyInterest)}</span>
+              </div>
+            `}
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Description Table -->
+      <div class="invoice-table">
+        ${pageIndex === 0 ? '<div class="table-header">Description</div>' : ''}
+        <table>
+          <thead>
+            <tr>${tableHeaders}</tr>
+          </thead>
+          <tbody>
+            ${tableRows(pageRecords)}
+          </tbody>
+        </table>
+      </div>
+
+      ${pageIndex === pages.length - 1 ? `
+        <!-- Total (only on last page) -->
+        <div class="invoice-total-premium">
+          <div class="total-bar">
+            ${role === 'client' ? `
+              <span class="total-label-premium">Total Due ${formattedDate}</span>
+              <span class="total-value-premium">${formatCurrency(totalInterestDue)}</span>
+            ` : `
+              <span class="total-label-premium">Total Interest Earned (${formattedDate})</span>
+              <span class="total-value-premium">${formatCurrency(monthlyInterest)}</span>
+            `}
+          </div>
+        </div>
+
+        <!-- Footer (only on last page) -->
+        <div class="invoice-footer-premium">
+          <div class="footer-content">
+            <p class="footer-thank-you">Thank you for your continued partnership.</p>
+            <div class="footer-contact">
+              <span class="footer-company">Coastal Private Lending</span>
+              <span class="footer-separator">|</span>
+              <span class="footer-email">ashley@coastalprivatelending.com</span>
+              <span class="footer-separator">|</span>
+              <span class="footer-phone">(410) 369-6337</span>
+            </div>
+            <div class="footer-address">
+              <p>30 E. Padonia Rd., Suite 206 • Timonium, MD 21093</p>
+              <p><a href="http://www.CoastalPrivateLending.com">www.CoastalPrivateLending.com</a></p>
+            </div>
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `).join('');
+
+  // Read CSS from frontend
+  const cssPath = path.join(__dirname, '../../../frontend/src/styles/Dashboard.css');
+  let css = '';
+  try {
+    css = require('fs').readFileSync(cssPath, 'utf8');
+    console.log(`Loaded CSS (${css.length} characters)`);
+  } catch (err) {
+    console.error('Could not load Dashboard.css:', err.message);
+  }
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Invoice - ${businessName}</title>
+  <style>
+    ${css}
+
+    /* Force print styles to apply in Puppeteer */
+    @page {
+      size: 8.5in 11in;
+      margin: 0.75in 0;
+    }
+
+    @page :first {
+      margin: 0 0 0.75in 0;  /* top right bottom left - only bottom margin for page 1 */
+    }
+
+    * {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      width: 8.5in;
+    }
+
+    /* Apply print styles directly (not just in @media print) */
+    .invoice-page {
+      width: 100% !important;
+      max-width: 100% !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      box-shadow: none !important;
+      border: none !important;
+      background: white !important;
+      page-break-after: always !important;
+      display: block !important;
+      position: relative !important;
+    }
+
+    .invoice-page:last-of-type {
+      page-break-after: auto !important;
+    }
+
+    .invoice-header-premium {
+      background: linear-gradient(135deg, #1E3A8A 0%, #2563EB 100%) !important;
+      margin: 0 !important;
+      padding: 48px 0.75in !important;
+      display: flex !important;
+      justify-content: space-between !important;
+      align-items: center !important;
+      width: 100% !important;
+      box-sizing: border-box !important;
+    }
+
+    .invoice-two-column {
+      page-break-inside: auto;
+      padding: 0 0.75in !important;
+      margin: 16px 0 !important;
+    }
+
+    .invoice-table {
+      page-break-inside: auto;
+      padding: 16px 0.75in !important;
+      margin: 0 !important;
+    }
+
+    .invoice-table table {
+      border-collapse: collapse;
+      page-break-inside: auto;
+      width: 100%;
+    }
+
+    .invoice-table thead {
+      background: linear-gradient(135deg, #1E3A8A 0%, #2563EB 100%) !important;
+      display: table-header-group;
+    }
+
+    .invoice-table thead th {
+      background: transparent !important;
+      color: white !important;
+    }
+
+    .invoice-table tbody {
+      display: table-row-group;
+    }
+
+    .invoice-table tr {
+      page-break-inside: avoid;
+      page-break-after: auto;
+    }
+
+    .invoice-total-premium {
+      page-break-inside: auto;
+      padding: 0 0.75in !important;
+      margin: 16px 0 !important;
+    }
+
+    .invoice-footer-premium {
+      page-break-inside: auto;
+      padding: 0 0.75in 0.75in 0.75in !important;
+    }
+  </style>
+</head>
+<body>
+  ${pagesHTML}
+</body>
+</html>
+  `;
+}
+
+/**
+ * Process invoice for a single business (client/borrower)
+ */
+async function processBusiness(browser, businessName, invoiceDate, logoBase64) {
+  try {
+    console.log(`Processing business: ${businessName}`);
+
+    // Get records from funded table
+    const records = await db.Funded.findAll({
+      where: { businessName: businessName },
+      raw: true
+    });
+
+    if (records.length === 0) {
+      console.warn(`No records found for business: ${businessName}`);
+      return { success: false, reason: 'no_records' };
+    }
+
+    // Generate HTML
+    const html = generateInvoiceHTML(businessName, 'client', records, invoiceDate, logoBase64);
+
+    // Generate PDF using Puppeteer
+    const page = await browser.newPage();
+    await page.emulateMediaType('print');
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+
+    // Set viewport to match Letter size at 96 DPI
+    await page.setViewport({
+      width: 816,  // 8.5 inches * 96 DPI
+      height: 1056, // 11 inches * 96 DPI
+      deviceScaleFactor: 1
+    });
+
+    const pdfBuffer = await page.pdf({
+      format: 'Letter',
+      printBackground: true,
+      margin: { top: 0, right: 0, bottom: 0, left: 0 },
+      preferCSSPageSize: true,
+      displayHeaderFooter: false,
+      scale: 0.85  // 15% scale down to match browser print rendering
+    });
+    await page.close();
+
+    // Generate file name and S3 key
+    const fileName = generateFileName(businessName, invoiceDate);
+    const s3Key = generateS3Key('client', businessName, fileName);
+
+    // Upload to S3
+    const s3Url = await uploadToS3(pdfBuffer, s3Key);
+
+    // Calculate total
+    const totalAmount = records.reduce((sum, r) => sum + (parseFloat(r.interestPayment) || 0), 0);
+
+    // Save to database
+    // Format date as YYYY-MM-DD without timezone conversion
+    const year = invoiceDate.getFullYear();
+    const month = String(invoiceDate.getMonth() + 1).padStart(2, '0');
+    const day = String(invoiceDate.getDate()).padStart(2, '0');
+    const invoiceDateStr = `${year}-${month}-${day}`;
+
+    await db.Invoice.upsert({
+      businessName: businessName,
+      role: 'client',
+      invoiceDate: invoiceDateStr,
+      fileName: fileName,
+      s3Key: s3Key,
+      s3Url: s3Url,
+      totalAmount: totalAmount,
+      recordCount: records.length
+    });
+
+    console.log(`✓ Successfully processed ${businessName}: ${records.length} records, $${totalAmount.toFixed(2)}`);
+
+    // Send email to ALL users with this business name
+    const users = await getUserEmails(businessName, 'client');
+    const successfulRecipients = [];
+
+    if (users.length > 0) {
+      console.log(`  → Sending invoice emails to ${users.length} recipient(s)...`);
+
+      let emailsSent = 0;
+      let emailsFailed = 0;
+      const allRecipients = [];
+
+      for (const user of users) {
+        console.log(`     • ${user.email}...`);
+        const emailResult = await sendInvoiceEmail(
+          user.email,
+          businessName,
+          'client',
+          pdfBuffer,
+          fileName,
+          invoiceDate,
+          totalAmount
+        );
+
+        if (emailResult.success) {
+          emailsSent++;
+          allRecipients.push(user.email);
+          successfulRecipients.push({
+            email: user.email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            businessName: user.businessName,
+            role: user.role
+          });
+          console.log(`     ✓ Sent successfully`);
+        } else {
+          emailsFailed++;
+          console.log(`     ✗ Failed: ${emailResult.error}`);
+        }
+      }
+
+      // Update invoice record with email status
+      await db.Invoice.update({
+        emailSent: emailsSent > 0,
+        emailSentAt: emailsSent > 0 ? new Date() : null,
+        emailRecipient: allRecipients.join(', '),
+        emailError: emailsFailed > 0 ? `${emailsFailed} failed` : null
+      }, {
+        where: {
+          businessName: businessName,
+          role: 'client',
+          invoiceDate: invoiceDateStr
+        }
+      });
+
+      console.log(`  ✓ Sent to ${emailsSent}/${users.length} recipients`);
+    } else {
+      console.log(`  ⚠ No email found for ${businessName}`);
+    }
+
+    return { success: true, emailSent: users.length > 0, recipients: successfulRecipients };
+  } catch (error) {
+    console.error(`✗ Failed to process business ${businessName}:`, error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Process invoice for a single investor (promissory)
+ */
+async function processInvestor(browser, investorName, invoiceDate, logoBase64) {
+  try {
+    console.log(`Processing investor: ${investorName}`);
+
+    // Get active records from promissory table (exclude closed - case insensitive)
+    const records = await db.Promissory.findAll({
+      where: {
+        investorName: investorName,
+        [db.Sequelize.Op.or]: [
+          { status: null },
+          { status: { [db.Sequelize.Op.notILike]: 'closed' } }
+        ]
+      },
+      raw: true
+    });
+
+    if (records.length === 0) {
+      console.warn(`No active records found for investor: ${investorName}`);
+      return { success: false, reason: 'no_records' };
+    }
+
+    // Generate HTML
+    const html = generateInvoiceHTML(investorName, 'investor', records, invoiceDate, logoBase64);
+
+    // Generate PDF using Puppeteer
+    const page = await browser.newPage();
+    await page.emulateMediaType('print');
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+
+    // Set viewport to match Letter size at 96 DPI
+    await page.setViewport({
+      width: 816,  // 8.5 inches * 96 DPI
+      height: 1056, // 11 inches * 96 DPI
+      deviceScaleFactor: 1
+    });
+
+    const pdfBuffer = await page.pdf({
+      format: 'Letter',
+      printBackground: true,
+      margin: { top: 0, right: 0, bottom: 0, left: 0 },
+      preferCSSPageSize: true,
+      displayHeaderFooter: false,
+      scale: 0.85  // 15% scale down to match browser print rendering
+    });
+    await page.close();
+
+    // Generate file name and S3 key
+    const fileName = generateFileName(investorName, invoiceDate);
+    const s3Key = generateS3Key('investor', investorName, fileName);
+
+    // Upload to S3
+    const s3Url = await uploadToS3(pdfBuffer, s3Key);
+
+    // Calculate totals
+    const totalAmount = records.reduce((sum, r) => sum + (parseFloat(r.loanAmount) || 0), 0);
+    const monthlyInterest = records.reduce((sum, r) => sum + (parseFloat(r.capitalPay) || 0), 0);
+
+    // Save to database
+    // Format date as YYYY-MM-DD without timezone conversion
+    const year = invoiceDate.getFullYear();
+    const month = String(invoiceDate.getMonth() + 1).padStart(2, '0');
+    const day = String(invoiceDate.getDate()).padStart(2, '0');
+    const invoiceDateStr = `${year}-${month}-${day}`;
+
+    await db.Invoice.upsert({
+      businessName: investorName,
+      role: 'investor',
+      invoiceDate: invoiceDateStr,
+      fileName: fileName,
+      s3Key: s3Key,
+      s3Url: s3Url,
+      totalAmount: monthlyInterest,
+      recordCount: records.length
+    });
+
+    console.log(`✓ Successfully processed ${investorName}: ${records.length} records, $${monthlyInterest.toFixed(2)}/month`);
+
+    // Send email to ALL users with this investor name
+    const users = await getUserEmails(investorName, 'investor');
+    const successfulRecipients = [];
+
+    if (users.length > 0) {
+      console.log(`  → Sending invoice emails to ${users.length} recipient(s)...`);
+
+      let emailsSent = 0;
+      let emailsFailed = 0;
+      const allRecipients = [];
+
+      for (const user of users) {
+        console.log(`     • ${user.email}...`);
+        const emailResult = await sendInvoiceEmail(
+          user.email,
+          investorName,
+          'investor',
+          pdfBuffer,
+          fileName,
+          invoiceDate,
+          monthlyInterest
+        );
+
+        if (emailResult.success) {
+          emailsSent++;
+          allRecipients.push(user.email);
+          successfulRecipients.push({
+            email: user.email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            businessName: user.businessName,
+            role: user.role
+          });
+          console.log(`     ✓ Sent successfully`);
+        } else {
+          emailsFailed++;
+          console.log(`     ✗ Failed: ${emailResult.error}`);
+        }
+      }
+
+      // Update invoice record with email status
+      await db.Invoice.update({
+        emailSent: emailsSent > 0,
+        emailSentAt: emailsSent > 0 ? new Date() : null,
+        emailRecipient: allRecipients.join(', '),
+        emailError: emailsFailed > 0 ? `${emailsFailed} failed` : null
+      }, {
+        where: {
+          businessName: investorName,
+          role: 'investor',
+          invoiceDate: invoiceDateStr
+        }
+      });
+
+      console.log(`  ✓ Sent to ${emailsSent}/${users.length} recipients`);
+    } else {
+      console.log(`  ⚠ No email found for ${investorName}`);
+    }
+
+    return { success: true, emailSent: users.length > 0, recipients: successfulRecipients };
+  } catch (error) {
+    console.error(`✗ Failed to process investor ${investorName}:`, error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Process invoice for a single cap investor
+ */
+async function processCapInvestor(browser, investorName, invoiceDate, logoBase64) {
+  try {
+    console.log(`Processing cap investor: ${investorName}`);
+
+    // Get funded records from capinvestor table (only funded loans)
+    const records = await db.CapInvestor.findAll({
+      where: {
+        investorName: investorName,
+        loanStatus: 'Funded'
+      },
+      raw: true
+    });
+
+    if (records.length === 0) {
+      console.warn(`No active records found for cap investor: ${investorName}`);
+      return { success: false, reason: 'no_records' };
+    }
+
+    // Generate HTML
+    const html = generateInvoiceHTML(investorName, 'capinvestor', records, invoiceDate, logoBase64);
+
+    // Generate PDF using Puppeteer
+    const page = await browser.newPage();
+    await page.emulateMediaType('print');
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+
+    // Set viewport to match Letter size at 96 DPI
+    await page.setViewport({
+      width: 816,  // 8.5 inches * 96 DPI
+      height: 1056, // 11 inches * 96 DPI
+      deviceScaleFactor: 1
+    });
+
+    const pdfBuffer = await page.pdf({
+      format: 'Letter',
+      printBackground: true,
+      margin: { top: 0, right: 0, bottom: 0, left: 0 },
+      preferCSSPageSize: true,
+      displayHeaderFooter: false,
+      scale: 0.85  // 15% scale down to match browser print rendering
+    });
+    await page.close();
+
+    // Generate file name and S3 key
+    const fileName = generateFileName(investorName, invoiceDate);
+    const s3Key = generateS3Key('capinvestor', investorName, fileName);
+
+    // Upload to S3
+    const s3Url = await uploadToS3(pdfBuffer, s3Key);
+
+    // Calculate totals
+    const totalAmount = records.reduce((sum, r) => sum + (parseFloat(r.loanAmount) || 0), 0);
+    const monthlyInterest = records.reduce((sum, r) => sum + (parseFloat(r.payment) || 0), 0);
+
+    // Save to database
+    // Format date as YYYY-MM-DD without timezone conversion
+    const year = invoiceDate.getFullYear();
+    const month = String(invoiceDate.getMonth() + 1).padStart(2, '0');
+    const day = String(invoiceDate.getDate()).padStart(2, '0');
+    const invoiceDateStr = `${year}-${month}-${day}`;
+
+    await db.Invoice.upsert({
+      businessName: investorName,
+      role: 'capinvestor',
+      invoiceDate: invoiceDateStr,
+      fileName: fileName,
+      s3Key: s3Key,
+      s3Url: s3Url,
+      totalAmount: monthlyInterest,
+      recordCount: records.length
+    });
+
+    console.log(`✓ Successfully processed ${investorName}: ${records.length} records, $${monthlyInterest.toFixed(2)}/month`);
+
+    // Send email to ALL users with this investor name
+    const users = await getUserEmails(investorName, 'capinvestor');
+    const successfulRecipients = [];
+
+    if (users.length > 0) {
+      console.log(`  → Sending invoice emails to ${users.length} recipient(s)...`);
+
+      let emailsSent = 0;
+      let emailsFailed = 0;
+      const allRecipients = [];
+
+      for (const user of users) {
+        console.log(`     • ${user.email}...`);
+        const emailResult = await sendInvoiceEmail(
+          user.email,
+          investorName,
+          'capinvestor',
+          pdfBuffer,
+          fileName,
+          invoiceDate,
+          monthlyInterest
+        );
+
+        if (emailResult.success) {
+          emailsSent++;
+          allRecipients.push(user.email);
+          successfulRecipients.push({
+            email: user.email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            businessName: user.businessName,
+            role: user.role
+          });
+          console.log(`     ✓ Sent successfully`);
+        } else {
+          emailsFailed++;
+          console.log(`     ✗ Failed: ${emailResult.error}`);
+        }
+      }
+
+      // Update invoice record with email status
+      await db.Invoice.update({
+        emailSent: emailsSent > 0,
+        emailSentAt: emailsSent > 0 ? new Date() : null,
+        emailRecipient: allRecipients.join(', '),
+        emailError: emailsFailed > 0 ? `${emailsFailed} failed` : null
+      }, {
+        where: {
+          businessName: investorName,
+          role: 'capinvestor',
+          invoiceDate: invoiceDateStr
+        }
+      });
+
+      console.log(`  ✓ Sent to ${emailsSent}/${users.length} recipients`);
+    } else {
+      console.log(`  ⚠ No email found for ${investorName}`);
+    }
+
+    return { success: true, emailSent: users.length > 0, recipients: successfulRecipients };
+  } catch (error) {
+    console.error(`✗ Failed to process cap investor ${investorName}:`, error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Send summary report email to management
+ */
+async function sendSummaryReport(allRecipients, invoiceDate) {
+  try {
+    const nodemailer = require('nodemailer');
+    const { google } = require('googleapis');
+    const OAuth2 = google.auth.OAuth2;
+
+    // Create OAuth2 client
+    const oauth2Client = new OAuth2(
+      process.env.EMAIL_CLIENT_ID,
+      process.env.EMAIL_CLIENT_SECRET,
+      'https://developers.google.com/oauthplayground'
+    );
+
+    oauth2Client.setCredentials({
+      refresh_token: process.env.EMAIL_REFRESH_TOKEN
+    });
+
+    const accessToken = await oauth2Client.getAccessToken();
+
+    // Create transporter
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        type: 'OAuth2',
+        user: process.env.EMAIL_USER,
+        clientId: process.env.EMAIL_CLIENT_ID,
+        clientSecret: process.env.EMAIL_CLIENT_SECRET,
+        refreshToken: process.env.EMAIL_REFRESH_TOKEN,
+        accessToken: accessToken.token
+      }
+    });
+
+    // Format date
+    const formattedDate = invoiceDate.toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric'
+    });
+
+    // Categorize recipients by role
+    const borrowers = allRecipients.filter(r => r.role === 'client' || r.role === 'borrower');
+    const promissory = allRecipients.filter(r => r.role === 'promissory');
+    const capInvestors = allRecipients.filter(r => r.role === 'capinvestor');
+
+    // Generate HTML for each category
+    const generateTableRows = (recipients) => {
+      if (recipients.length === 0) {
+        return '<tr><td colspan="3" style="text-align: center; padding: 12px; color: #666;">No invoices sent</td></tr>';
+      }
+      return recipients.map((r, idx) => `
+        <tr style="${idx % 2 === 0 ? 'background-color: #f9fafb;' : ''}">
+          <td style="padding: 12px; border-bottom: 1px solid #e2e8f0;">${r.businessName}</td>
+          <td style="padding: 12px; border-bottom: 1px solid #e2e8f0;">${r.firstName} ${r.lastName}</td>
+          <td style="padding: 12px; border-bottom: 1px solid #e2e8f0;">${r.email}</td>
+        </tr>
+      `).join('');
+    };
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Invoice Generation Report</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f4; padding: 20px 0;">
+    <tr>
+      <td align="center">
+        <table width="800" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background: linear-gradient(135deg, #1E3A8A 0%, #2563EB 100%); padding: 40px 30px; text-align: center;">
+              <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: bold;">Monthly Invoice Report</h1>
+              <p style="color: #E0E7FF; margin: 10px 0 0 0; font-size: 16px;">${formattedDate}</p>
+            </td>
+          </tr>
+
+          <!-- Summary Stats -->
+          <tr>
+            <td style="padding: 30px;">
+              <div style="display: flex; justify-content: space-around; text-align: center; margin-bottom: 30px;">
+                <div style="flex: 1; padding: 20px; background-color: #f0f9ff; border-radius: 8px; margin: 0 5px;">
+                  <div style="font-size: 32px; font-weight: bold; color: #1e40af;">${borrowers.length}</div>
+                  <div style="font-size: 14px; color: #64748b; text-transform: uppercase; margin-top: 8px;">Clients</div>
+                </div>
+                <div style="flex: 1; padding: 20px; background-color: #f0fdf4; border-radius: 8px; margin: 0 5px;">
+                  <div style="font-size: 32px; font-weight: bold; color: #15803d;">${promissory.length}</div>
+                  <div style="font-size: 14px; color: #64748b; text-transform: uppercase; margin-top: 8px;">Promissory</div>
+                </div>
+                <div style="flex: 1; padding: 20px; background-color: #fef3c7; border-radius: 8px; margin: 0 5px;">
+                  <div style="font-size: 32px; font-weight: bold; color: #92400e;">${capInvestors.length}</div>
+                  <div style="font-size: 14px; color: #64748b; text-transform: uppercase; margin-top: 8px;">Cap Investors</div>
+                </div>
+              </div>
+
+              <!-- Borrowers/Clients -->
+              <h2 style="color: #1e40af; font-size: 20px; margin: 30px 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #2563EB;">
+                Clients / Borrowers (${borrowers.length})
+              </h2>
+              <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse; margin-bottom: 30px;">
+                <thead>
+                  <tr style="background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);">
+                    <th style="padding: 12px; text-align: left; color: white; font-weight: 600;">Business Name</th>
+                    <th style="padding: 12px; text-align: left; color: white; font-weight: 600;">Name</th>
+                    <th style="padding: 12px; text-align: left; color: white; font-weight: 600;">Email</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${generateTableRows(borrowers)}
+                </tbody>
+              </table>
+
+              <!-- Promissory Investors -->
+              <h2 style="color: #15803d; font-size: 20px; margin: 30px 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #22c55e;">
+                Promissory Investors (${promissory.length})
+              </h2>
+              <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse; margin-bottom: 30px;">
+                <thead>
+                  <tr style="background: linear-gradient(135deg, #15803d 0%, #22c55e 100%);">
+                    <th style="padding: 12px; text-align: left; color: white; font-weight: 600;">Investor Name</th>
+                    <th style="padding: 12px; text-align: left; color: white; font-weight: 600;">Name</th>
+                    <th style="padding: 12px; text-align: left; color: white; font-weight: 600;">Email</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${generateTableRows(promissory)}
+                </tbody>
+              </table>
+
+              <!-- Cap Investors -->
+              <h2 style="color: #92400e; font-size: 20px; margin: 30px 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #f59e0b;">
+                Cap Investors (${capInvestors.length})
+              </h2>
+              <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse; margin-bottom: 30px;">
+                <thead>
+                  <tr style="background: linear-gradient(135deg, #92400e 0%, #f59e0b 100%);">
+                    <th style="padding: 12px; text-align: left; color: white; font-weight: 600;">Investor Name</th>
+                    <th style="padding: 12px; text-align: left; color: white; font-weight: 600;">Name</th>
+                    <th style="padding: 12px; text-align: left; color: white; font-weight: 600;">Email</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${generateTableRows(capInvestors)}
+                </tbody>
+              </table>
+
+              <!-- Total -->
+              <div style="background-color: #f8fafc; padding: 20px; border-radius: 8px; text-align: center; margin-top: 30px;">
+                <p style="margin: 0; font-size: 18px; color: #1e293b;">
+                  <strong>Total Invoices Sent:</strong> <span style="color: #2563EB; font-size: 24px; font-weight: bold;">${allRecipients.length}</span>
+                </p>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #f9fafb; padding: 20px; text-align: center; border-top: 1px solid #e5e7eb;">
+              <p style="color: #64748b; font-size: 14px; margin: 0;">
+                This is an automated report from the Coastal Private Lending invoice generation system.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+    `;
+
+    // Send email to management
+    const managementEmails = [
+      'todd@coastalprivatelending.com',
+      'ashley@coastalprivatelending.com',
+      'benjamin.frankstein@gmail.com'
+    ];
+
+    await transporter.sendMail({
+      from: `${process.env.EMAIL_FROM_NAME} <${process.env.EMAIL_USER}>`,
+      to: managementEmails.join(', '),
+      subject: `Invoice Generation Report - ${formattedDate}`,
+      html: html
+    });
+
+    console.log('\n✓ Summary report sent to management');
+  } catch (error) {
+    console.error('✗ Failed to send summary report:', error.message);
+  }
+}
+
+/**
+ * Main execution function
+ */
+async function main() {
+  console.log('='.repeat(80));
+  console.log('Starting Monthly Invoice Generation');
+  console.log('='.repeat(80));
+
+  // Validate environment variables
+  if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
+    console.error('Missing required environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY');
+    process.exit(1);
+  }
+
+  // Use first of current month as invoice date (Eastern Time)
+  // Get current date in Eastern timezone
+  const nowET = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
+  const dateET = new Date(nowET);
+
+  // Create invoice date as 1st of current month in Eastern Time
+  const year = dateET.getFullYear();
+  const month = dateET.getMonth();
+  const invoiceDate = new Date(year, month, 1, 0, 0, 0, 0);
+
+  console.log(`Invoice Date: ${invoiceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`);
+
+  // Load logo
+  console.log('Loading logo...');
+  let logoBase64 = null;
+  try {
+    const logoPath = path.join(__dirname, '../../../frontend/src/assets/coastal-logo.png');
+    const logoBuffer = await fs.readFile(logoPath);
+    logoBase64 = logoBuffer.toString('base64');
+    console.log('Logo loaded successfully');
+  } catch (error) {
+    console.warn('Could not load logo:', error.message);
+  }
+
+  // Launch Puppeteer
+  console.log('Launching browser...');
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  });
+
+  // Statistics
+  const stats = {
+    clients: { processed: 0, failed: 0, emailsSent: 0, emailsFailed: 0, noEmail: 0 },
+    investors: { processed: 0, failed: 0, emailsSent: 0, emailsFailed: 0, noEmail: 0 },
+    capinvestors: { processed: 0, failed: 0, emailsSent: 0, emailsFailed: 0, noEmail: 0 }
+  };
+
+  // Track all successful email recipients for summary report
+  const allRecipients = [];
+
+  try {
+    // Process all businesses (clients/borrowers)
+    console.log('\n' + '='.repeat(80));
+    console.log('Processing Businesses (Clients/Borrowers)');
+    console.log('='.repeat(80));
+
+    const businesses = await db.Funded.findAll({
+      attributes: [[db.Sequelize.fn('DISTINCT', db.Sequelize.col('business_name')), 'business_name']],
+      raw: true
+    });
+    console.log(`Found ${businesses.length} businesses`);
+
+    for (const business of businesses) {
+      const result = await processBusiness(browser, business.business_name, invoiceDate, logoBase64);
+      if (result.success) {
+        stats.clients.processed++;
+        if (result.emailSent === true) {
+          stats.clients.emailsSent++;
+        } else if (result.emailSent === false) {
+          stats.clients.noEmail++;
+        }
+        // Collect recipients for summary report
+        if (result.recipients && result.recipients.length > 0) {
+          allRecipients.push(...result.recipients);
+        }
+      } else {
+        stats.clients.failed++;
+      }
+    }
+
+    // Process all investors (promissory)
+    console.log('\n' + '='.repeat(80));
+    console.log('Processing Investors (Promissory)');
+    console.log('='.repeat(80));
+
+    const investors = await db.Promissory.findAll({
+      attributes: [[db.Sequelize.fn('DISTINCT', db.Sequelize.col('investor_name')), 'investor_name']],
+      where: {
+        investorName: { [db.Sequelize.Op.ne]: null },
+        [db.Sequelize.Op.or]: [
+          { status: null },
+          { status: { [db.Sequelize.Op.notILike]: 'closed' } }
+        ]
+      },
+      raw: true
+    });
+    console.log(`Found ${investors.length} investors`);
+
+    for (const investor of investors) {
+      const result = await processInvestor(browser, investor.investor_name, invoiceDate, logoBase64);
+      if (result.success) {
+        stats.investors.processed++;
+        if (result.emailSent === true) {
+          stats.investors.emailsSent++;
+        } else if (result.emailSent === false) {
+          stats.investors.noEmail++;
+        }
+        // Collect recipients for summary report
+        if (result.recipients && result.recipients.length > 0) {
+          allRecipients.push(...result.recipients);
+        }
+      } else {
+        stats.investors.failed++;
+      }
+    }
+
+    // Process all cap investors
+    console.log('\n' + '='.repeat(80));
+    console.log('Processing Cap Investors');
+    console.log('='.repeat(80));
+
+    const capInvestors = await db.CapInvestor.findAll({
+      attributes: [[db.Sequelize.fn('DISTINCT', db.Sequelize.col('investor_name')), 'investor_name']],
+      where: {
+        investorName: { [db.Sequelize.Op.ne]: null },
+        loanStatus: 'Funded'
+      },
+      raw: true
+    });
+    console.log(`Found ${capInvestors.length} cap investors`);
+
+    for (const capInvestor of capInvestors) {
+      const result = await processCapInvestor(browser, capInvestor.investor_name, invoiceDate, logoBase64);
+      if (result.success) {
+        stats.capinvestors.processed++;
+        if (result.emailSent === true) {
+          stats.capinvestors.emailsSent++;
+        } else if (result.emailSent === false) {
+          stats.capinvestors.noEmail++;
+        }
+        // Collect recipients for summary report
+        if (result.recipients && result.recipients.length > 0) {
+          allRecipients.push(...result.recipients);
+        }
+      } else {
+        stats.capinvestors.failed++;
+      }
+    }
+
+  } finally {
+    await browser.close();
+  }
+
+  // Send summary report to management
+  if (allRecipients.length > 0) {
+    console.log('\n' + '='.repeat(80));
+    console.log('Sending Summary Report to Management');
+    console.log('='.repeat(80));
+    await sendSummaryReport(allRecipients, invoiceDate);
+  } else {
+    console.log('\n⚠ No invoices were sent, skipping summary report');
+  }
+
+  // Print summary
+  console.log('\n' + '='.repeat(80));
+  console.log('Invoice Generation Complete');
+  console.log('='.repeat(80));
+  console.log(`Clients:       ${stats.clients.processed} processed, ${stats.clients.failed} failed`);
+  console.log(`               ${stats.clients.emailsSent} emails sent, ${stats.clients.noEmail} no email found`);
+  console.log(`Investors:     ${stats.investors.processed} processed, ${stats.investors.failed} failed`);
+  console.log(`               ${stats.investors.emailsSent} emails sent, ${stats.investors.noEmail} no email found`);
+  console.log(`Cap Investors: ${stats.capinvestors.processed} processed, ${stats.capinvestors.failed} failed`);
+  console.log(`               ${stats.capinvestors.emailsSent} emails sent, ${stats.capinvestors.noEmail} no email found`);
+  console.log('='.repeat(80));
+
+  const totalProcessed = stats.clients.processed + stats.investors.processed + stats.capinvestors.processed;
+  const totalFailed = stats.clients.failed + stats.investors.failed + stats.capinvestors.failed;
+  const totalEmailsSent = stats.clients.emailsSent + stats.investors.emailsSent + stats.capinvestors.emailsSent;
+  const totalNoEmail = stats.clients.noEmail + stats.investors.noEmail + stats.capinvestors.noEmail;
+  console.log(`TOTAL: ${totalProcessed} successful, ${totalFailed} failed`);
+  console.log(`EMAILS: ${totalEmailsSent} sent, ${totalNoEmail} no email found`);
+
+  process.exit(totalFailed > 0 ? 1 : 0);
+}
+
+// Run if executed directly
+if (require.main === module) {
+  main().catch(error => {
+    console.error('Fatal error:', error);
+    process.exit(1);
+  });
+}
+
+module.exports = { main };

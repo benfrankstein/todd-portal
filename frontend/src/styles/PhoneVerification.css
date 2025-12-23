@@ -1,0 +1,159 @@
+.phone-verification-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.phone-verification-modal {
+  background: white;
+  border-radius: 8px;
+  padding: 2rem;
+  max-width: 500px;
+  width: 90%;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.phone-verification-header {
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+.phone-verification-header h2 {
+  margin: 0 0 1rem 0;
+  color: #333;
+  font-size: 1.5rem;
+}
+
+.phone-verification-header p {
+  margin: 0;
+  color: #666;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.phone-verification-header strong {
+  color: #2c5282;
+  font-weight: 600;
+}
+
+.phone-verification-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.form-group label {
+  font-weight: 600;
+  color: #333;
+  font-size: 0.9rem;
+}
+
+.code-input {
+  padding: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1.5rem;
+  text-align: center;
+  letter-spacing: 0.5rem;
+  font-family: monospace;
+  transition: border-color 0.2s;
+}
+
+.code-input:focus {
+  outline: none;
+  border-color: #2c5282;
+  box-shadow: 0 0 0 3px rgba(44, 82, 130, 0.1);
+}
+
+.code-input::placeholder {
+  font-size: 1rem;
+  letter-spacing: normal;
+  font-family: inherit;
+}
+
+.form-actions {
+  display: flex;
+  gap: 1rem;
+}
+
+.btn-primary {
+  flex: 1;
+  padding: 0.75rem 1.5rem;
+  background-color: #2c5282;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-color: #1e3a5f;
+}
+
+.btn-primary:disabled {
+  background-color: #cbd5e0;
+  cursor: not-allowed;
+}
+
+.resend-section {
+  text-align: center;
+  padding-top: 1rem;
+  border-top: 1px solid #eee;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: #2c5282;
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0.5rem 1rem;
+  transition: color 0.2s;
+}
+
+.btn-link:hover:not(:disabled) {
+  color: #1e3a5f;
+}
+
+.btn-link:disabled {
+  color: #cbd5e0;
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+.error-message {
+  padding: 0.75rem;
+  background-color: #fff5f5;
+  border: 1px solid #fc8181;
+  border-radius: 4px;
+  color: #c53030;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.success-message {
+  padding: 0.75rem;
+  background-color: #f0fff4;
+  border: 1px solid #68d391;
+  border-radius: 4px;
+  color: #2f855a;
+  font-size: 0.9rem;
+  text-align: center;
+}
