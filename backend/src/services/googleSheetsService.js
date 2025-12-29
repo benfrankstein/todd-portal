@@ -13,14 +13,23 @@ class GoogleSheetsService {
    */
   async initialize() {
     try {
-      // Load service account credentials
-      const credentialsPath = path.join(__dirname, '../../google-credentials.json');
+      let credentials;
 
-      if (!fs.existsSync(credentialsPath)) {
-        throw new Error('Google credentials file not found. Please add google-credentials.json to the backend directory.');
+      // Try to load credentials from environment variable first (for production)
+      if (process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+        console.log('Loading Google credentials from environment variable...');
+        credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
+      } else {
+        // Fall back to file-based credentials (for local development)
+        const credentialsPath = path.join(__dirname, '../../google-credentials.json');
+
+        if (!fs.existsSync(credentialsPath)) {
+          throw new Error('Google credentials not found. Please either:\n1. Add google-credentials.json to the backend directory, OR\n2. Set GOOGLE_SERVICE_ACCOUNT_KEY environment variable');
+        }
+
+        console.log('Loading Google credentials from file...');
+        credentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
       }
-
-      const credentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
 
       // Create JWT client
       this.auth = new google.auth.GoogleAuth({
@@ -164,10 +173,10 @@ class GoogleSheetsService {
    * - Asset ID: Column E (index 4) - parse S001 number (optional)
    * - Fund Date: Column F (index 5)
    * - Maturity Date: Column H (index 7)
-   * - Loan Amount: Column I (index 8)
-   * - Payoff Date: Column J (index 9)
-   * - Interest Rate: Column M (index 12)
-   * - Capital Pay: Column N (index 13)
+   * - Loan Amount: Column J (index 9)
+   * - Payoff Date: Column K (index 10)
+   * - Interest Rate: Column N (index 13)
+   * - Capital Pay: Column O (index 14)
    *
    * Data starts at row 5
    * Only investor name (index 2) is required - all other fields can be NULL
@@ -200,10 +209,10 @@ class GoogleSheetsService {
         assetId: this.parseAssetId(row[4]),             // Column E (index 4) - parsed (can be null)
         fundDate: this.parseDate(row[5]),               // Column F (index 5)
         maturityDate: this.parseDate(row[7]),           // Column H (index 7)
-        loanAmount: this.parseNumber(row[8]),           // Column I (index 8)
-        payoffDate: this.parseDate(row[9]),             // Column J (index 9)
-        interestRate: this.parseNumber(row[12]),        // Column M (index 12)
-        capitalPay: this.parseNumber(row[13])           // Column N (index 13)
+        loanAmount: this.parseNumber(row[9]),           // Column J (index 9)
+        payoffDate: this.parseDate(row[10]),            // Column K (index 10)
+        interestRate: this.parseNumber(row[13]),        // Column N (index 13)
+        capitalPay: this.parseNumber(row[14])           // Column O (index 14)
       };
 
       promissoryRecords.push(promissoryData);
