@@ -18,7 +18,21 @@ class GoogleSheetsService {
       // Try to load credentials from environment variable first (for production)
       if (process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
         console.log('Loading Google credentials from environment variable...');
-        credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
+        try {
+          let credentialsJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+
+          // Try to decode from base64 first (if it doesn't start with '{')
+          if (!credentialsJson.trim().startsWith('{')) {
+            console.log('Decoding base64 encoded credentials...');
+            credentialsJson = Buffer.from(credentialsJson, 'base64').toString('utf-8');
+          }
+
+          credentials = JSON.parse(credentialsJson);
+          console.log('✓ Successfully parsed credentials');
+        } catch (parseError) {
+          console.error('✗ Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY:', parseError.message);
+          throw new Error('Invalid GOOGLE_SERVICE_ACCOUNT_KEY format. Please check the environment variable.');
+        }
       } else {
         // Fall back to file-based credentials (for local development)
         const credentialsPath = path.join(__dirname, '../../google-credentials.json');
