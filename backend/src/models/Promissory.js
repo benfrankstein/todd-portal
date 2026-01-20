@@ -60,10 +60,20 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       field: 'capital_pay'
     },
+    yearToDate: {
+      type: DataTypes.DECIMAL(12, 2),
+      allowNull: true,
+      field: 'year_to_date'
+    },
     lastSeenAt: {
       type: DataTypes.DATE,
       allowNull: true,
       field: 'last_seen_at'
+    },
+    firstInvoiceGeneratedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: 'first_invoice_generated_at'
     }
   }, {
     tableName: 'promissory',

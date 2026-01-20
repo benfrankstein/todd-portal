@@ -25,8 +25,7 @@ function AdminDashboard() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [investorSearchTerm, setInvestorSearchTerm] = useState('');
-  const [capInvestorSearchTerm, setCapInvestorSearchTerm] = useState('');
+  const [activeTab, setActiveTab] = useState('borrowers'); // 'borrowers', 'promissory', 'capinvestors'
 
   // Sync state
   const [syncing, setSyncing] = useState(false);
@@ -41,34 +40,14 @@ function AdminDashboard() {
   const [userToDelete, setUserToDelete] = useState(null);
   const [notification, setNotification] = useState({ show: false, type: '', message: '' });
 
-  // Refs for click-away detection
-  const borrowerSearchRef = useRef(null);
-  const investorSearchRef = useRef(null);
-  const capInvestorSearchRef = useRef(null);
-
   useEffect(() => {
     loadData();
   }, []);
 
-  // Click-away listener for search dropdowns
+  // Reset search term when changing tabs
   useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (borrowerSearchRef.current && !borrowerSearchRef.current.contains(event.target)) {
-        setSearchTerm('');
-      }
-      if (investorSearchRef.current && !investorSearchRef.current.contains(event.target)) {
-        setInvestorSearchTerm('');
-      }
-      if (capInvestorSearchRef.current && !capInvestorSearchRef.current.contains(event.target)) {
-        setCapInvestorSearchTerm('');
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, []);
+    setSearchTerm('');
+  }, [activeTab]);
 
   const loadData = async () => {
     try {
@@ -246,20 +225,27 @@ function AdminDashboard() {
     setUserToDelete(null);
   };
 
-  // Filter businesses based on search term
-  const filteredBusinesses = businesses.filter(business =>
-    business.businessName.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Get current tab data and filter based on search term
+  const getCurrentTabData = () => {
+    switch (activeTab) {
+      case 'borrowers':
+        return businesses.filter(business =>
+          business.businessName.toLowerCase().includes(searchTerm.toLowerCase())
+        );
+      case 'promissory':
+        return investors.filter(investor =>
+          investor.investorName.toLowerCase().includes(searchTerm.toLowerCase())
+        );
+      case 'capinvestors':
+        return capInvestors.filter(capInvestor =>
+          capInvestor.investorName.toLowerCase().includes(searchTerm.toLowerCase())
+        );
+      default:
+        return [];
+    }
+  };
 
-  // Filter investors based on search term
-  const filteredInvestors = investors.filter(investor =>
-    investor.investorName.toLowerCase().includes(investorSearchTerm.toLowerCase())
-  );
-
-  // Filter cap investors based on search term
-  const filteredCapInvestors = capInvestors.filter(capInvestor =>
-    capInvestor.investorName.toLowerCase().includes(capInvestorSearchTerm.toLowerCase())
-  );
+  const currentTabData = getCurrentTabData();
 
   if (loading) {
     return <div className="dashboard-container">Loading...</div>;
@@ -301,155 +287,85 @@ function AdminDashboard() {
       </header>
 
       <div className="dashboard-content">
-        {/* User Creation Grid */}
-        <div className="admin-grid">
-          {/* Borrowers Card */}
-          <div className="admin-card">
-            <div className="admin-card-header">
-              <h3>Borrowers</h3>
-              <span className="admin-count">{businesses.length}</span>
-            </div>
-            <div className="admin-card-body">
-              <div className="admin-search-container" ref={borrowerSearchRef}>
-                <input
-                  id="business-search"
-                  type="text"
-                  className="admin-search-input"
-                  placeholder="Search borrowers..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-                {searchTerm && (
-                  <div className="business-dropdown">
-                    {filteredBusinesses.length > 0 ? (
-                      filteredBusinesses.map((business, index) => {
-                        const businessUsers = users.filter(u => u.businessName === business.businessName && u.role === 'borrower');
-                        return (
-                          <div key={index} className="business-dropdown-item">
-                            <div className="business-dropdown-info">
-                              <div className="business-dropdown-name">{business.businessName}</div>
-                              <div className="business-dropdown-users">{businessUsers.length} user(s)</div>
-                            </div>
-                            <button
-                              onClick={() => {
-                                openCreateUserModal(business);
-                                setSearchTerm('');
-                              }}
-                              className="business-dropdown-button"
-                            >
-                              + Create User
-                            </button>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <div className="business-dropdown-empty">
-                        No borrowers found
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
+        {/* Tab Navigation */}
+        <div className="admin-tabs-container">
+          <div className="admin-tabs">
+            <button
+              className={`admin-tab ${activeTab === 'borrowers' ? 'active' : ''}`}
+              onClick={() => setActiveTab('borrowers')}
+            >
+              Borrowers
+              <span className="tab-count">{businesses.length}</span>
+            </button>
+            <button
+              className={`admin-tab ${activeTab === 'promissory' ? 'active' : ''}`}
+              onClick={() => setActiveTab('promissory')}
+            >
+              Promissory
+              <span className="tab-count">{investors.length}</span>
+            </button>
+            <button
+              className={`admin-tab ${activeTab === 'capinvestors' ? 'active' : ''}`}
+              onClick={() => setActiveTab('capinvestors')}
+            >
+              Cap Investors
+              <span className="tab-count">{capInvestors.length}</span>
+            </button>
           </div>
 
-          {/* Promissory Card */}
-          <div className="admin-card">
-            <div className="admin-card-header">
-              <h3>Promissory</h3>
-              <span className="admin-count">{investors.length}</span>
+          {/* Tab Content */}
+          <div className="admin-tab-content">
+            {/* Search Bar */}
+            <div className="admin-tab-search">
+              <input
+                type="text"
+                className="admin-search-input"
+                placeholder={
+                  activeTab === 'borrowers' ? 'Search borrowers...' :
+                  activeTab === 'promissory' ? 'Search promissory...' :
+                  'Search cap investors...'
+                }
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
             </div>
-            <div className="admin-card-body">
-              <div className="admin-search-container" ref={investorSearchRef}>
-                <input
-                  id="investor-search"
-                  type="text"
-                  className="admin-search-input"
-                  placeholder="Search promissory..."
-                  value={investorSearchTerm}
-                  onChange={(e) => setInvestorSearchTerm(e.target.value)}
-                />
-                {investorSearchTerm && (
-                  <div className="business-dropdown">
-                    {filteredInvestors.length > 0 ? (
-                      filteredInvestors.map((investor, index) => {
-                        const investorUsers = users.filter(u => u.businessName === investor.investorName && u.role === 'promissory');
-                        return (
-                          <div key={index} className="business-dropdown-item">
-                            <div className="business-dropdown-info">
-                              <div className="business-dropdown-name">{investor.investorName}</div>
-                              <div className="business-dropdown-users">{investorUsers.length} user(s)</div>
-                            </div>
-                            <button
-                              onClick={() => {
-                                openCreateInvestorModal(investor);
-                                setInvestorSearchTerm('');
-                              }}
-                              className="business-dropdown-button"
-                            >
-                              + Create User
-                            </button>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <div className="business-dropdown-empty">
-                        No promissory found
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
 
-          {/* Cap Investors Card */}
-          <div className="admin-card">
-            <div className="admin-card-header">
-              <h3>Cap Investors</h3>
-              <span className="admin-count">{capInvestors.length}</span>
-            </div>
-            <div className="admin-card-body">
-              <div className="admin-search-container" ref={capInvestorSearchRef}>
-                <input
-                  id="capinvestor-search"
-                  type="text"
-                  className="admin-search-input"
-                  placeholder="Search cap investors..."
-                  value={capInvestorSearchTerm}
-                  onChange={(e) => setCapInvestorSearchTerm(e.target.value)}
-                />
-                {capInvestorSearchTerm && (
-                  <div className="business-dropdown">
-                    {filteredCapInvestors.length > 0 ? (
-                      filteredCapInvestors.map((capInvestor, index) => {
-                        const capInvestorUsers = users.filter(u => u.businessName === capInvestor.investorName && u.role === 'capinvestor');
-                        return (
-                          <div key={index} className="business-dropdown-item">
-                            <div className="business-dropdown-info">
-                              <div className="business-dropdown-name">{capInvestor.investorName}</div>
-                              <div className="business-dropdown-users">{capInvestorUsers.length} user(s)</div>
-                            </div>
-                            <button
-                              onClick={() => {
-                                openCreateCapInvestorModal(capInvestor);
-                                setCapInvestorSearchTerm('');
-                              }}
-                              className="business-dropdown-button"
-                            >
-                              + Create User
-                            </button>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <div className="business-dropdown-empty">
-                        No cap investors found
+            {/* Scrollable Business List */}
+            <div className="admin-business-list">
+              {currentTabData.length > 0 ? (
+                currentTabData.map((item, index) => {
+                  const name = item.businessName || item.investorName;
+                  const role = activeTab === 'borrowers' ? 'borrower' : activeTab === 'promissory' ? 'promissory' : 'capinvestor';
+                  const itemUsers = users.filter(u => u.businessName === name && u.role === role);
+
+                  return (
+                    <div key={index} className="admin-business-item">
+                      <div className="admin-business-info">
+                        <div className="admin-business-name">{name}</div>
+                        <div className="admin-business-users">{itemUsers.length} user(s)</div>
                       </div>
-                    )}
-                  </div>
-                )}
-              </div>
+                      <button
+                        onClick={() => {
+                          if (activeTab === 'borrowers') {
+                            openCreateUserModal(item);
+                          } else if (activeTab === 'promissory') {
+                            openCreateInvestorModal(item);
+                          } else {
+                            openCreateCapInvestorModal(item);
+                          }
+                        }}
+                        className="admin-create-user-button"
+                      >
+                        + Create User
+                      </button>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="admin-business-empty">
+                  {searchTerm ? 'No results found' : `No ${activeTab} available`}
+                </div>
+              )}
             </div>
           </div>
         </div>

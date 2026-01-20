@@ -405,6 +405,114 @@
   font-weight: 500;
 }
 
+/* Invoice Coming Soon */
+.invoice-coming-soon {
+  padding: 120px 40px;
+}
+
+.coming-soon-icon {
+  font-size: 64px;
+  margin-bottom: 24px;
+}
+
+.invoice-coming-soon h3 {
+  color: #1e293b;
+  font-size: 28px;
+  margin: 0 0 16px 0;
+  font-weight: 700;
+}
+
+.invoice-coming-soon p {
+  color: #64748b;
+  font-size: 18px;
+  margin: 0;
+}
+
+/* Current Invoice Container */
+.current-invoice-container {
+  background: white;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  overflow: hidden;
+}
+
+.invoice-header-section {
+  padding: 24px 32px;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.invoice-header-section .section-title {
+  margin: 0;
+  font-size: 24px;
+  color: #1e293b;
+}
+
+.invoice-meta {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.invoice-date-label {
+  color: #64748b;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.download-button.primary {
+  background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+  color: white;
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 15px;
+}
+
+.download-button.primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.pdf-viewer-container {
+  width: 100%;
+  min-height: 800px;
+  background: #f8fafc;
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 20px;
+}
+
+.pdf-iframe {
+  width: 210mm;
+  max-width: 100%;
+  height: 297mm;
+  border: none;
+  background: white;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
+  border-radius: 4px;
+}
+
+.pdf-loading-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: #64748b;
+  font-size: 16px;
+  font-weight: 500;
+}
+
 /* Delete User Button */
 .delete-user-button {
   background: transparent;
@@ -884,6 +992,50 @@
 
   .project-card {
     padding: 24px;
+  }
+
+  .invoice-header-section {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 20px;
+  }
+
+  .invoice-meta {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    width: 100%;
+  }
+
+  .download-button.primary {
+    width: 100%;
+  }
+
+  .pdf-viewer-container {
+    padding: 20px 10px;
+    min-height: 500px;
+  }
+
+  .pdf-iframe {
+    width: 100%;
+    height: calc(100vw * 1.414);
+    max-height: 600px;
+  }
+
+  .invoice-coming-soon {
+    padding: 60px 24px;
+  }
+
+  .coming-soon-icon {
+    font-size: 48px;
+  }
+
+  .invoice-coming-soon h3 {
+    font-size: 22px;
+  }
+
+  .invoice-coming-soon p {
+    font-size: 16px;
   }
 }
 
@@ -1370,6 +1522,167 @@
   color: #94a3b8;
 }
 
+/* Admin Tabs Container */
+.admin-tabs-container {
+  max-width: 1400px;
+  margin: 32px auto;
+  padding: 0 48px;
+}
+
+.admin-tabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 2px solid #e2e8f0;
+  margin-bottom: 0;
+}
+
+.admin-tab {
+  padding: 16px 32px;
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  color: #64748b;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+  margin-bottom: -2px;
+}
+
+.admin-tab:hover {
+  color: #3b82f6;
+  background: #f8fafc;
+}
+
+.admin-tab.active {
+  color: #1e40af;
+  border-bottom-color: #3b82f6;
+  background: white;
+}
+
+.tab-count {
+  background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+  color: white;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.admin-tab:not(.active) .tab-count {
+  background: #e2e8f0;
+  color: #64748b;
+}
+
+.admin-tab-content {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 0 0 16px 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+}
+
+.admin-tab-search {
+  padding: 24px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.admin-business-list {
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.admin-business-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.admin-business-list::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+.admin-business-list::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.admin-business-list::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.admin-business-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border-radius: 8px;
+  transition: all 0.2s;
+  border: 1px solid #e2e8f0;
+  margin-bottom: 8px;
+  background: white;
+}
+
+.admin-business-item:last-child {
+  margin-bottom: 0;
+}
+
+.admin-business-item:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  transform: translateX(4px);
+}
+
+.admin-business-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.admin-business-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1e293b;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-business-users {
+  font-size: 14px;
+  color: #64748b;
+}
+
+.admin-create-user-button {
+  padding: 10px 20px;
+  background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.admin-create-user-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.admin-business-empty {
+  text-align: center;
+  padding: 48px 24px;
+  color: #94a3b8;
+  font-size: 16px;
+}
+
 /* Admin Users Section */
 .admin-users-section {
   padding: 0 48px 48px 48px;
@@ -1422,6 +1735,10 @@
   .admin-users-section {
     padding: 0 24px 24px 24px;
   }
+
+  .admin-tabs-container {
+    padding: 0 24px;
+  }
 }
 
 @media (max-width: 768px) {
@@ -1444,6 +1761,39 @@
 
   .admin-users-header {
     padding: 20px;
+  }
+
+  .admin-tabs-container {
+    padding: 0 16px;
+    margin: 16px auto;
+  }
+
+  .admin-tab {
+    padding: 12px 16px;
+    font-size: 14px;
+  }
+
+  .tab-count {
+    padding: 2px 8px;
+    font-size: 12px;
+  }
+
+  .admin-tab-search {
+    padding: 16px;
+  }
+
+  .admin-business-list {
+    max-height: 300px;
+  }
+
+  .admin-business-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .admin-create-user-button {
+    width: 100%;
   }
 }
 

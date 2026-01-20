@@ -17,6 +17,7 @@ function ClientDashboard() {
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [invoices, setInvoices] = useState([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
+  const [pdfLoaded, setPdfLoaded] = useState(false);
 
   useEffect(() => {
     loadRecords();
@@ -285,8 +286,7 @@ function ClientDashboard() {
       <div className="dashboard-content">
 
         {/* Projects Tab */}
-        {activeTab === 'projects' && (
-          <section className="dashboard-section">
+        <section className="dashboard-section" style={{ display: activeTab === 'projects' ? 'block' : 'none' }}>
             {/* Portfolio Metrics */}
             <div className="portfolio-metrics">
               <div className="metric-card">
@@ -445,241 +445,40 @@ function ClientDashboard() {
                 })}
               </div>
             )}
-          </section>
-        )}
+        </section>
 
         {/* Invoice Statement Tab */}
-        {activeTab === 'invoice' && (
-          <div className="invoice-container">
-            {/* Export as PDF button - commented out but kept for future use
-            <button className="print-button no-print" onClick={handlePrint}>
-              Export as PDF
-            </button>
-            */}
-
-            {(() => {
-              // Filter records based on role
-              const invoiceRecords = user.role === 'capinvestor'
-                ? records.filter(r => r.loanStatus && r.loanStatus.toLowerCase() === 'funded')
-                : user.role === 'promissory'
-                ? records.filter(r => !r.status || r.status.toLowerCase() !== 'closed')
-                : records;
-
-              // Split records into pages
-              const FIRST_PAGE_ROWS = 12; // Conservative for header space
-              const SUBSEQUENT_PAGE_ROWS = 20;
-              const pages = [];
-
-              if (invoiceRecords.length <= FIRST_PAGE_ROWS) {
-                // All records fit on first page
-                pages.push(invoiceRecords);
-              } else {
-                // Split into multiple pages
-                pages.push(invoiceRecords.slice(0, FIRST_PAGE_ROWS));
-                let remainingRecords = invoiceRecords.slice(FIRST_PAGE_ROWS);
-
-                while (remainingRecords.length > 0) {
-                  pages.push(remainingRecords.slice(0, SUBSEQUENT_PAGE_ROWS));
-                  remainingRecords = remainingRecords.slice(SUBSEQUENT_PAGE_ROWS);
-                }
-              }
-
-              return pages.map((pageRecords, pageIndex) => (
-                <div key={pageIndex} className={`invoice-page ${pageIndex > 0 ? 'invoice-page-continuation' : ''}`}>
-                  {/* First page gets the header, bill to, and account summary */}
-                  {pageIndex === 0 && (
-                    <>
-                      {/* Premium Header with Logo */}
-                      <div className="invoice-header-premium">
-                        <div className="invoice-logo-container">
-                          <img src={logo} alt="Coastal Private Lending" className="invoice-logo-image" />
-                          <div className="statement-title">Loan Invoice</div>
-                        </div>
-                        <div className="invoice-date-box">
-                          <div className="date-label">Date</div>
-                          <div className="date-value">{getInvoiceDate()}</div>
-                        </div>
-                      </div>
-
-                      {/* Bill To and Account Summary Side by Side */}
-                      <div className="invoice-two-column">
-                        <div className="invoice-section invoice-section-half">
-                          <div className="section-title">Bill To</div>
-                          <div className="bill-to-content">{businessName}</div>
-                        </div>
-
-                        <div className="invoice-section invoice-section-half account-summary-simple">
-                          <div className="section-title">Account Summary</div>
-                          {user.role === 'capinvestor' ? (
-                            <>
-                              <div className="summary-simple-row">
-                                <span className="summary-simple-label">Total Amount Invested</span>
-                                <span className="summary-simple-value">
-                                  {formatCurrency(records.filter(r => r.loanStatus && r.loanStatus.toLowerCase() === 'funded').reduce((sum, r) => sum + (parseFloat(r.loanAmount) || 0), 0))}
-                                </span>
-                              </div>
-                              <div className="summary-simple-row">
-                                <span className="summary-simple-label">Monthly Interest Earned</span>
-                                <span className="summary-simple-value">
-                                  {formatCurrency(records.filter(r => r.loanStatus && r.loanStatus.toLowerCase() === 'funded').reduce((sum, r) => sum + (parseFloat(r.payment) || 0), 0))}
-                                </span>
-                              </div>
-                            </>
-                          ) : user.role === 'promissory' ? (
-                            <>
-                              <div className="summary-simple-row">
-                                <span className="summary-simple-label">Total Amount Invested</span>
-                                <span className="summary-simple-value">
-                                  {formatCurrency(records.filter(r => !r.status || r.status.toLowerCase() !== 'closed').reduce((sum, r) => sum + (parseFloat(r.loanAmount) || 0), 0))}
-                                </span>
-                              </div>
-                              <div className="summary-simple-row">
-                                <span className="summary-simple-label">Monthly Interest Earned</span>
-                                <span className="summary-simple-value">
-                                  {formatCurrency(records.filter(r => !r.status || r.status.toLowerCase() !== 'closed').reduce((sum, r) => sum + (parseFloat(r.capitalPay) || 0), 0))}
-                                </span>
-                              </div>
-                            </>
-                          ) : (
-                            <div className="summary-simple-row">
-                              <span className="summary-simple-label">Total Interest Due</span>
-                              <span className="summary-simple-value">
-                                {formatCurrency(records.reduce((sum, r) => sum + (parseFloat(r.interestPayment) || 0), 0))}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </>
-                  )}
-
-                  {/* Description Table - appears on every page */}
-                  <div className="invoice-table">
-                    {pageIndex === 0 && <div className="table-header">Description</div>}
-                    <table>
-                      <thead>
-                        <tr>
-                          {user.role === 'capinvestor' ? (
-                            <>
-                              <th>Property Address</th>
-                              <th>Loan Amount</th>
-                              <th>Interest Rate</th>
-                              <th>Interest Earned</th>
-                            </>
-                          ) : user.role === 'promissory' ? (
-                            <>
-                              <th>Date Funded</th>
-                              <th>Loan Amount</th>
-                              <th>Interest Rate</th>
-                              <th>Interest Earned</th>
-                            </>
-                          ) : (
-                            <>
-                              <th>Property Address</th>
-                              <th>Loan Amount</th>
-                              <th>Interest Payment</th>
-                            </>
-                          )}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {pageRecords.map((record, index) => {
-                          // Calculate global index for alternating row colors
-                          const globalIndex = pageIndex === 0
-                            ? index
-                            : FIRST_PAGE_ROWS + (pageIndex - 1) * SUBSEQUENT_PAGE_ROWS + index;
-
-                          return (
-                            <tr key={record.id || globalIndex} className={globalIndex % 2 === 0 ? 'row-even' : 'row-odd'}>
-                              {user.role === 'capinvestor' ? (
-                                <>
-                                  <td>{record.propertyAddress || 'No Address'}</td>
-                                  <td>{formatCurrency(record.loanAmount)}</td>
-                                  <td>{formatPercent(record.interestRate)}</td>
-                                  <td>{formatCurrency(record.payment)}</td>
-                                </>
-                              ) : user.role === 'promissory' ? (
-                                <>
-                                  <td>{formatDate(record.fundDate)}</td>
-                                  <td>{formatCurrency(record.loanAmount)}</td>
-                                  <td>{formatPercent(record.interestRate)}</td>
-                                  <td>{formatCurrency(record.capitalPay)}</td>
-                                </>
-                              ) : (
-                                <>
-                                  <td>{record.projectAddress || 'No Address'}</td>
-                                  <td>{formatCurrency(record.loanAmount)}</td>
-                                  <td>{formatCurrency(record.interestPayment)}</td>
-                                </>
-                              )}
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Last page gets the total and footer */}
-                  {pageIndex === pages.length - 1 && (
-                    <>
-                      {/* Premium Total Due Bar */}
-                      <div className="invoice-total-premium">
-                        <div className="total-bar">
-                          {user.role === 'capinvestor' ? (
-                            <>
-                              <span className="total-label-premium">Total Interest Earned ({getInvoiceDate()})</span>
-                              <span className="total-value-premium">
-                                {formatCurrency(records.filter(r => r.loanStatus && r.loanStatus.toLowerCase() === 'funded').reduce((sum, r) => sum + (parseFloat(r.payment) || 0), 0))}
-                              </span>
-                            </>
-                          ) : user.role === 'promissory' ? (
-                            <>
-                              <span className="total-label-premium">Total Interest Earned ({getInvoiceDate()})</span>
-                              <span className="total-value-premium">
-                                {formatCurrency(records.filter(r => !r.status || r.status.toLowerCase() !== 'closed').reduce((sum, r) => sum + (parseFloat(r.capitalPay) || 0), 0))}
-                              </span>
-                            </>
-                          ) : (
-                            <>
-                              <span className="total-label-premium">Total Due {getInvoiceDate()}</span>
-                              <span className="total-value-premium">
-                                {formatCurrency(records.reduce((sum, r) => sum + (parseFloat(r.interestPayment) || 0), 0))}
-                              </span>
-                            </>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Premium Footer */}
-                      <div className="invoice-footer-premium">
-                        <div className="footer-divider"></div>
-                        <div className="footer-content">
-                          <p className="footer-thank-you">Thank you for your continued partnership.</p>
-                          <div className="footer-contact">
-                            <span className="footer-company">Coastal Private Lending</span>
-                            <span className="footer-separator">|</span>
-                            <span className="footer-email">support@coastalprivate.com</span>
-                            <span className="footer-separator">|</span>
-                            <span className="footer-phone">(410) 555-8290</span>
-                          </div>
-                          <div className="footer-address">
-                            <p>30 E. Padonia Rd., Suite 206 • Timonium, MD 21093</p>
-                            <p><a href="http://www.CoastalPrivateLending.com">www.CoastalPrivateLending.com</a></p>
-                          </div>
-                        </div>
-                        <div className="footer-brand-bar"></div>
-                      </div>
-                    </>
-                  )}
+        <section className="dashboard-section" style={{ display: activeTab === 'invoice' ? 'block' : 'none' }}>
+          {loadingInvoices ? (
+            <div className="loading-container">
+              <p>Loading invoice...</p>
+            </div>
+          ) : invoices.length === 0 ? (
+            <div className="empty-state invoice-coming-soon">
+              <div className="coming-soon-icon">📄</div>
+              <h3>New Invoice Statement Coming Soon</h3>
+              <p>Your invoice statement will be available on the 1st of next month.</p>
+            </div>
+          ) : (
+            <div className="pdf-viewer-container">
+              {!pdfLoaded && (
+                <div className="pdf-loading-overlay">
+                  <p>Loading invoice...</p>
                 </div>
-              ));
-            })()}
-          </div>
-        )}
+              )}
+              <iframe
+                src={`${invoices[0].downloadUrl}#toolbar=0&navpanes=0&view=FitH`}
+                title="Invoice Statement"
+                className="pdf-iframe"
+                onLoad={() => setPdfLoaded(true)}
+                style={{ display: pdfLoaded ? 'block' : 'none' }}
+              />
+            </div>
+          )}
+        </section>
 
         {/* Past Statements Tab */}
-        {activeTab === 'statements' && (
-          <section className="dashboard-section">
+        <section className="dashboard-section" style={{ display: activeTab === 'statements' ? 'block' : 'none' }}>
             <h2 className="section-title">Past Invoice Statements</h2>
 
             {loadingInvoices ? (
@@ -723,8 +522,7 @@ function ClientDashboard() {
                 </table>
               </div>
             )}
-          </section>
-        )}
+        </section>
       </div>
 
       {/* Project Details Modal */}

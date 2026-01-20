@@ -69,6 +69,11 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: true,
       field: 'last_name'
+    },
+    firstInvoiceGeneratedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: 'first_invoice_generated_at'
     }
   }, {
     tableName: 'funded',

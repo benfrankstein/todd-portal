@@ -177,6 +177,7 @@ class GoogleSheetsService {
    * - Payoff Date: Column K (index 10)
    * - Interest Rate: Column N (index 13)
    * - Capital Pay: Column O (index 14)
+   * - Year to Date: Column Q (index 16)
    *
    * Data starts at row 5
    * Only investor name (index 2) is required - all other fields can be NULL
@@ -212,7 +213,8 @@ class GoogleSheetsService {
         loanAmount: this.parseNumber(row[9]),           // Column J (index 9)
         payoffDate: this.parseDate(row[10]),            // Column K (index 10)
         interestRate: this.parseNumber(row[13]),        // Column N (index 13)
-        capitalPay: this.parseNumber(row[14])           // Column O (index 14)
+        capitalPay: this.parseNumber(row[14]),          // Column O (index 14)
+        yearToDate: this.parseNumber(row[16])           // Column Q (index 16)
       };
 
       promissoryRecords.push(promissoryData);
@@ -464,6 +466,44 @@ class GoogleSheetsService {
   }
 
   /**
+   * Parse cap investor payments data from Google Sheet
+   * Column mapping:
+   * - Account Type: Column A (index 0) - optional (e.g., "IRA")
+   * - Investor Name: Column B (index 1) - REQUIRED
+   * - Year to Date Payment: Column C (index 2)
+   *
+   * Data starts at row 7 (index 6)
+   */
+  parseCapInvestorPaymentsData(rows) {
+    const paymentsMap = new Map();
+
+    // Skip to row 7 (index 6) where data starts
+    const dataRows = rows.slice(6);
+
+    for (const row of dataRows) {
+      // Skip empty rows
+      if (!row || row.length === 0) {
+        continue;
+      }
+
+      const investorName = row[1] ? String(row[1]).trim() : null;
+
+      // Skip if no investor name or if it's empty after trimming
+      if (!investorName) {
+        continue;
+      }
+
+      const yearToDate = this.parseNumber(row[2]); // Column C (index 2)
+
+      // Store in map (if investor appears multiple times, last one wins)
+      paymentsMap.set(investorName, yearToDate);
+    }
+
+    console.log(`Parsed ${paymentsMap.size} year-to-date payment records from Cap Investor Payments`);
+    return paymentsMap;
+  }
+
+  /**
    * Parse cap investor data from Google Sheet
    * Column mapping:
    * - Property Address: Column B (index 1) - REQUIRED
@@ -584,6 +624,19 @@ class GoogleSheetsService {
 
       console.log(`Found ${rows.length} total rows in CRM-Cap Investor sheet`);
 
+      // Read the Cap Investor Payments sheet for year-to-date data
+      let paymentsMap = new Map();
+      try {
+        const paymentsRange = 'Cap Investor Payments!A:C';
+        const paymentsRows = await this.readSheet(spreadsheetId, paymentsRange);
+        if (paymentsRows && paymentsRows.length > 0) {
+          paymentsMap = this.parseCapInvestorPaymentsData(paymentsRows);
+        }
+      } catch (error) {
+        console.warn('Could not fetch Cap Investor Payments data:', error.message);
+        console.warn('Continuing without year-to-date information...');
+      }
+
       // Parse cap investor data
       const capInvestorData = this.parseCapInvestorData(rows);
       console.log(`Parsed ${capInvestorData.length} valid cap investor records`);
@@ -603,6 +656,15 @@ class GoogleSheetsService {
           if (!record.propertyAddress || !record.investorName) {
             console.log(`Skipping record without composite key: ${record.propertyAddress || 'unknown'} - ${record.investorName || 'unknown'}`);
             continue;
+          }
+
+          // Match year-to-date data by exact investor name
+          if (paymentsMap.has(record.investorName)) {
+            record.yearToDate = paymentsMap.get(record.investorName);
+            console.log(`Matched year-to-date for ${record.investorName}: ${record.yearToDate}`);
+          } else {
+            // If no match found, set to null
+            record.yearToDate = null;
           }
 
           // Find existing record by composite key

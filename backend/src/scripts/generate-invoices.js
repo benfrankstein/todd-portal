@@ -30,6 +30,159 @@ const s3 = new AWS.S3({
 const S3_BUCKET = process.env.S3_BUCKET_NAME || 'coastal-lending-invoices';
 
 /**
+ * Get the number of days in a specific month
+ * @param {number} year - Full year (e.g., 2025)
+ * @param {number} month - Month (0-11, where 0 = January)
+ * @returns {number} Number of days in the month
+ */
+function getDaysInMonth(year, month) {
+  return new Date(year, month + 1, 0).getDate();
+}
+
+/**
+ * Calculate proration for first month invoice
+ * Invoice is generated on the 1st of the month following the fund/closing date
+ * and covers the period from fund/closing date to end of that month
+ *
+ * @param {Date} fundDate - The fund/closing date
+ * @param {number} monthlyPayment - The full monthly payment amount
+ * @returns {Object} Proration details or null if not applicable
+ */
+function calculateFirstMonthProration(fundDate, monthlyPayment) {
+  if (!fundDate || !monthlyPayment) return null;
+
+  const fund = new Date(fundDate);
+  const fundYear = fund.getFullYear();
+  const fundMonth = fund.getMonth();
+  const fundDay = fund.getDate();
+
+  // Calculate last day of the fund month
+  const daysInFundMonth = getDaysInMonth(fundYear, fundMonth);
+  const periodStart = new Date(fundYear, fundMonth, fundDay);
+  const periodEnd = new Date(fundYear, fundMonth, daysInFundMonth);
+
+  // Calculate days in period (inclusive)
+  const daysInPeriod = daysInFundMonth - fundDay + 1;
+
+  // Calculate prorated amount
+  const proratedAmount = (monthlyPayment / daysInFundMonth) * daysInPeriod;
+
+  return {
+    periodStart,
+    periodEnd,
+    daysInPeriod,
+    totalDaysInMonth: daysInFundMonth,
+    proratedAmount: Math.round(proratedAmount * 100) / 100 // Round to 2 decimals
+  };
+}
+
+/**
+ * Calculate proration for last month invoice
+ * Invoice is generated on the 1st of the month following the payoff date
+ * and covers the period from start of payoff month to the payoff date
+ *
+ * @param {Date} payoffDate - The payoff date
+ * @param {number} monthlyPayment - The full monthly payment amount
+ * @returns {Object} Proration details or null if not applicable
+ */
+function calculateLastMonthProration(payoffDate, monthlyPayment) {
+  if (!payoffDate || !monthlyPayment) return null;
+
+  const payoff = new Date(payoffDate);
+  const payoffYear = payoff.getFullYear();
+  const payoffMonth = payoff.getMonth();
+  const payoffDay = payoff.getDate();
+
+  const daysInPayoffMonth = getDaysInMonth(payoffYear, payoffMonth);
+  const periodStart = new Date(payoffYear, payoffMonth, 1);
+  const periodEnd = new Date(payoffYear, payoffMonth, payoffDay);
+
+  // Calculate days in period (inclusive)
+  const daysInPeriod = payoffDay;
+
+  // Calculate prorated amount
+  const proratedAmount = (monthlyPayment / daysInPayoffMonth) * daysInPeriod;
+
+  return {
+    periodStart,
+    periodEnd,
+    daysInPeriod,
+    totalDaysInMonth: daysInPayoffMonth,
+    proratedAmount: Math.round(proratedAmount * 100) / 100 // Round to 2 decimals
+  };
+}
+
+/**
+ * Determine if this invoice should have proration and what type
+ * @param {Object} loan - The loan record
+ * @param {Date} invoiceDate - The invoice date (1st of current month)
+ * @param {string} fundDateField - Name of the fund date field
+ * @param {string} payoffDateField - Name of the payoff date field (optional)
+ * @returns {Object} Proration information
+ */
+function determineProration(loan, invoiceDate, fundDateField, payoffDateField = null) {
+  const invoice = new Date(invoiceDate);
+  const invoiceYear = invoice.getFullYear();
+  const invoiceMonth = invoice.getMonth();
+
+  // The invoice covers the PREVIOUS month (invoices are in arrears)
+  const coveredYear = invoiceMonth === 0 ? invoiceYear - 1 : invoiceYear;
+  const coveredMonth = invoiceMonth === 0 ? 11 : invoiceMonth - 1;
+
+  const result = {
+    isFirstMonth: false,
+    isLastMonth: false,
+    prorationType: null,
+    periodStart: new Date(coveredYear, coveredMonth, 1),
+    periodEnd: new Date(coveredYear, coveredMonth, getDaysInMonth(coveredYear, coveredMonth))
+  };
+
+  // Check if this is the first month invoice
+  const fundDate = loan[fundDateField];
+  if (fundDate && !loan.firstInvoiceGeneratedAt) {
+    const fund = new Date(fundDate);
+    const fundYear = fund.getFullYear();
+    const fundMonth = fund.getMonth();
+
+    // Calculate the first invoice month (month after fund date)
+    const firstInvoiceYear = fundMonth === 11 ? fundYear + 1 : fundYear;
+    const firstInvoiceMonth = fundMonth === 11 ? 0 : fundMonth + 1;
+
+    // Is this invoice covering the month after the fund date?
+    const isFirstInvoiceAfterFunding = (
+      invoiceYear === firstInvoiceYear &&
+      invoiceMonth === firstInvoiceMonth
+    );
+
+    // If yes, check if the fund date is in the month we're covering (for proration)
+    if (isFirstInvoiceAfterFunding && fundYear === coveredYear && fundMonth === coveredMonth) {
+      result.isFirstMonth = true;
+      result.prorationType = 'first_month';
+      result.periodStart = fund;
+    }
+  }
+
+  // Check if this is the last month invoice (only if payoff field exists)
+  if (payoffDateField) {
+    const payoffDate = loan[payoffDateField];
+    if (payoffDate) {
+      const payoff = new Date(payoffDate);
+      const payoffYear = payoff.getFullYear();
+      const payoffMonth = payoff.getMonth();
+
+      // Is the payoff date in the month we're covering?
+      if (payoffYear === coveredYear && payoffMonth === coveredMonth) {
+        result.isLastMonth = true;
+        result.prorationType = 'last_month';
+        result.periodEnd = payoff;
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
  * Get all users by business name and role (returns full user objects)
  */
 async function getUserEmails(businessName, role) {
@@ -115,15 +268,20 @@ function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase6
   let totalInvested = 0;
   let monthlyInterest = 0;
   let totalInterestDue = 0;
+  let yearToDate = 0;
 
   if (role === 'client') {
     totalInterestDue = records.reduce((sum, r) => sum + (parseFloat(r.interestPayment) || 0), 0);
   } else if (role === 'investor') {
     totalInvested = records.reduce((sum, r) => sum + (parseFloat(r.loanAmount) || 0), 0);
     monthlyInterest = records.reduce((sum, r) => sum + (parseFloat(r.capitalPay) || 0), 0);
+    // Year-to-date is already aggregated per investor, just take first record's value
+    yearToDate = records.length > 0 ? (parseFloat(records[0].yearToDate) || 0) : 0;
   } else if (role === 'capinvestor') {
     totalInvested = records.reduce((sum, r) => sum + (parseFloat(r.loanAmount) || 0), 0);
     monthlyInterest = records.reduce((sum, r) => sum + (parseFloat(r.payment) || 0), 0);
+    // Year-to-date is already aggregated per investor, just take first record's value
+    yearToDate = records.length > 0 ? (parseFloat(records[0].yearToDate) || 0) : 0;
   }
 
   // Format currency
@@ -265,6 +423,12 @@ function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase6
               <span class="total-value-premium">${formatCurrency(monthlyInterest)}</span>
             `}
           </div>
+          ${role !== 'client' && yearToDate > 0 ? `
+          <div class="total-bar year-to-date-bar">
+            <span class="total-label-premium">Year to Date Interest Earned</span>
+            <span class="total-value-premium">${formatCurrency(yearToDate)}</span>
+          </div>
+          ` : ''}
         </div>
 
         <!-- Footer (only on last page) -->
@@ -421,10 +585,17 @@ async function processBusiness(browser, businessName, invoiceDate, logoBase64) {
   try {
     console.log(`Processing business: ${businessName}`);
 
-    // Get records from funded table
+    // Calculate the period we're covering (invoices are in arrears)
+    const invoice = new Date(invoiceDate);
+    const invoiceMonth = invoice.getMonth();
+    const invoiceYear = invoice.getFullYear();
+    const coveredYear = invoiceMonth === 0 ? invoiceYear - 1 : invoiceYear;
+    const coveredMonth = invoiceMonth === 0 ? 11 : invoiceMonth - 1;
+    const periodStart = new Date(coveredYear, coveredMonth, 1);
+
+    // Get records from funded table (Funded doesn't have payoff date, so no exclusion filter needed)
     const records = await db.Funded.findAll({
-      where: { businessName: businessName },
-      raw: true
+      where: { businessName: businessName }
     });
 
     if (records.length === 0) {
@@ -432,8 +603,58 @@ async function processBusiness(browser, businessName, invoiceDate, logoBase64) {
       return { success: false, reason: 'no_records' };
     }
 
-    // Generate HTML
-    const html = generateInvoiceHTML(businessName, 'client', records, invoiceDate, logoBase64);
+    // Process each record and apply proration logic
+    const processedRecords = [];
+    const lineItems = [];
+
+    for (const record of records) {
+      const proration = determineProration(record, invoiceDate, 'closingDate', null);
+
+      let finalAmount = parseFloat(record.interestPayment) || 0;
+      let isProrated = false;
+      let prorationType = null;
+      let daysInPeriod = getDaysInMonth(coveredYear, coveredMonth);
+      let totalDaysInMonth = daysInPeriod;
+
+      // Apply first month proration if applicable
+      if (proration.isFirstMonth) {
+        const prorationCalc = calculateFirstMonthProration(record.closingDate, finalAmount);
+        if (prorationCalc) {
+          finalAmount = prorationCalc.proratedAmount;
+          isProrated = true;
+          prorationType = 'first_month';
+          daysInPeriod = prorationCalc.daysInPeriod;
+          totalDaysInMonth = prorationCalc.totalDaysInMonth;
+          console.log(`  → First month proration for ${record.projectAddress}: $${finalAmount} (${daysInPeriod}/${totalDaysInMonth} days)`);
+        }
+      }
+
+      // Add to processed records for invoice display
+      processedRecords.push({
+        ...record.toJSON(),
+        interestPayment: finalAmount,
+        isProrated,
+        prorationType
+      });
+
+      // Prepare line item data
+      lineItems.push({
+        loanTable: 'funded',
+        loanId: record.id,
+        loanIdentifier: `${record.businessName} - ${record.projectAddress}`,
+        originalAmount: parseFloat(record.interestPayment) || 0,
+        proratedAmount: finalAmount,
+        isProrated,
+        prorationType,
+        periodStartDate: proration.periodStart,
+        periodEndDate: proration.periodEnd,
+        daysInPeriod,
+        totalDaysInMonth
+      });
+    }
+
+    // Generate HTML with processed records
+    const html = generateInvoiceHTML(businessName, 'client', processedRecords, invoiceDate, logoBase64);
 
     // Generate PDF using Puppeteer
     const page = await browser.newPage();
@@ -464,8 +685,8 @@ async function processBusiness(browser, businessName, invoiceDate, logoBase64) {
     // Upload to S3
     const s3Url = await uploadToS3(pdfBuffer, s3Key);
 
-    // Calculate total
-    const totalAmount = records.reduce((sum, r) => sum + (parseFloat(r.interestPayment) || 0), 0);
+    // Calculate total from processed records
+    const totalAmount = processedRecords.reduce((sum, r) => sum + (parseFloat(r.interestPayment) || 0), 0);
 
     // Save to database
     // Format date as YYYY-MM-DD without timezone conversion
@@ -474,7 +695,7 @@ async function processBusiness(browser, businessName, invoiceDate, logoBase64) {
     const day = String(invoiceDate.getDate()).padStart(2, '0');
     const invoiceDateStr = `${year}-${month}-${day}`;
 
-    await db.Invoice.upsert({
+    const [invoiceResult, created] = await db.Invoice.upsert({
       businessName: businessName,
       role: 'client',
       invoiceDate: invoiceDateStr,
@@ -482,8 +703,38 @@ async function processBusiness(browser, businessName, invoiceDate, logoBase64) {
       s3Key: s3Key,
       s3Url: s3Url,
       totalAmount: totalAmount,
-      recordCount: records.length
+      recordCount: processedRecords.length
+    }, {
+      returning: true
     });
+
+    // Get the actual invoice ID (upsert returns array with instance and created flag)
+    const invoiceRecord = Array.isArray(invoiceResult) ? invoiceResult[0] : invoiceResult;
+    const invoiceId = invoiceRecord.id;
+
+    // Delete existing line items for this invoice (in case of regeneration)
+    await db.InvoiceLineItem.destroy({
+      where: { invoiceId: invoiceId }
+    });
+
+    // Create line items
+    for (const lineItem of lineItems) {
+      await db.InvoiceLineItem.create({
+        invoiceId: invoiceId,
+        ...lineItem
+      });
+    }
+
+    // Update first_invoice_generated_at for records that had first month proration
+    for (const record of records) {
+      const proration = determineProration(record, invoiceDate, 'closingDate', null);
+      if (proration.isFirstMonth && !record.firstInvoiceGeneratedAt) {
+        await db.Funded.update(
+          { firstInvoiceGeneratedAt: new Date() },
+          { where: { id: record.id } }
+        );
+      }
+    }
 
     console.log(`✓ Successfully processed ${businessName}: ${records.length} records, $${totalAmount.toFixed(2)}`);
 
@@ -560,16 +811,28 @@ async function processInvestor(browser, investorName, invoiceDate, logoBase64) {
   try {
     console.log(`Processing investor: ${investorName}`);
 
-    // Get active records from promissory table (exclude closed - case insensitive)
+    // Calculate the period we're covering (invoices are in arrears)
+    const invoice = new Date(invoiceDate);
+    const invoiceMonth = invoice.getMonth();
+    const invoiceYear = invoice.getFullYear();
+    const coveredYear = invoiceMonth === 0 ? invoiceYear - 1 : invoiceYear;
+    const coveredMonth = invoiceMonth === 0 ? 11 : invoiceMonth - 1;
+    const periodStart = new Date(coveredYear, coveredMonth, 1);
+
+    // Get active records from promissory table
+    // Include loans with payoff_date >= period start (to include final prorated invoice)
     const records = await db.Promissory.findAll({
       where: {
         investorName: investorName,
         [db.Sequelize.Op.or]: [
           { status: null },
           { status: { [db.Sequelize.Op.notILike]: 'closed' } }
+        ],
+        [db.Sequelize.Op.or]: [
+          { payoffDate: null },
+          { payoffDate: { [db.Sequelize.Op.gte]: periodStart } }
         ]
-      },
-      raw: true
+      }
     });
 
     if (records.length === 0) {
@@ -577,8 +840,71 @@ async function processInvestor(browser, investorName, invoiceDate, logoBase64) {
       return { success: false, reason: 'no_records' };
     }
 
-    // Generate HTML
-    const html = generateInvoiceHTML(investorName, 'investor', records, invoiceDate, logoBase64);
+    // Process each record and apply proration logic
+    const processedRecords = [];
+    const lineItems = [];
+
+    for (const record of records) {
+      const proration = determineProration(record, invoiceDate, 'fundDate', 'payoffDate');
+
+      let finalAmount = parseFloat(record.capitalPay) || 0;
+      let isProrated = false;
+      let prorationType = null;
+      let daysInPeriod = getDaysInMonth(coveredYear, coveredMonth);
+      let totalDaysInMonth = daysInPeriod;
+
+      // Apply first month proration if applicable
+      if (proration.isFirstMonth) {
+        const prorationCalc = calculateFirstMonthProration(record.fundDate, finalAmount);
+        if (prorationCalc) {
+          finalAmount = prorationCalc.proratedAmount;
+          isProrated = true;
+          prorationType = 'first_month';
+          daysInPeriod = prorationCalc.daysInPeriod;
+          totalDaysInMonth = prorationCalc.totalDaysInMonth;
+          console.log(`  → First month proration for ${record.assetId || record.investorName}: $${finalAmount} (${daysInPeriod}/${totalDaysInMonth} days)`);
+        }
+      }
+
+      // Apply last month proration if applicable
+      if (proration.isLastMonth) {
+        const prorationCalc = calculateLastMonthProration(record.payoffDate, parseFloat(record.capitalPay) || 0);
+        if (prorationCalc) {
+          finalAmount = prorationCalc.proratedAmount;
+          isProrated = true;
+          prorationType = 'last_month';
+          daysInPeriod = prorationCalc.daysInPeriod;
+          totalDaysInMonth = prorationCalc.totalDaysInMonth;
+          console.log(`  → Last month proration for ${record.assetId || record.investorName}: $${finalAmount} (${daysInPeriod}/${totalDaysInMonth} days)`);
+        }
+      }
+
+      // Add to processed records for invoice display
+      processedRecords.push({
+        ...record.toJSON(),
+        capitalPay: finalAmount,
+        isProrated,
+        prorationType
+      });
+
+      // Prepare line item data
+      lineItems.push({
+        loanTable: 'promissory',
+        loanId: record.id,
+        loanIdentifier: `${record.assetId || 'Unknown'} - ${record.investorName}`,
+        originalAmount: parseFloat(record.capitalPay) || 0,
+        proratedAmount: finalAmount,
+        isProrated,
+        prorationType,
+        periodStartDate: proration.periodStart,
+        periodEndDate: proration.periodEnd,
+        daysInPeriod,
+        totalDaysInMonth
+      });
+    }
+
+    // Generate HTML with processed records
+    const html = generateInvoiceHTML(investorName, 'investor', processedRecords, invoiceDate, logoBase64);
 
     // Generate PDF using Puppeteer
     const page = await browser.newPage();
@@ -609,9 +935,9 @@ async function processInvestor(browser, investorName, invoiceDate, logoBase64) {
     // Upload to S3
     const s3Url = await uploadToS3(pdfBuffer, s3Key);
 
-    // Calculate totals
-    const totalAmount = records.reduce((sum, r) => sum + (parseFloat(r.loanAmount) || 0), 0);
-    const monthlyInterest = records.reduce((sum, r) => sum + (parseFloat(r.capitalPay) || 0), 0);
+    // Calculate totals from processed records
+    const totalAmount = processedRecords.reduce((sum, r) => sum + (parseFloat(r.loanAmount) || 0), 0);
+    const monthlyInterest = processedRecords.reduce((sum, r) => sum + (parseFloat(r.capitalPay) || 0), 0);
 
     // Save to database
     // Format date as YYYY-MM-DD without timezone conversion
@@ -620,7 +946,7 @@ async function processInvestor(browser, investorName, invoiceDate, logoBase64) {
     const day = String(invoiceDate.getDate()).padStart(2, '0');
     const invoiceDateStr = `${year}-${month}-${day}`;
 
-    await db.Invoice.upsert({
+    const [invoiceResult, created] = await db.Invoice.upsert({
       businessName: investorName,
       role: 'investor',
       invoiceDate: invoiceDateStr,
@@ -628,8 +954,38 @@ async function processInvestor(browser, investorName, invoiceDate, logoBase64) {
       s3Key: s3Key,
       s3Url: s3Url,
       totalAmount: monthlyInterest,
-      recordCount: records.length
+      recordCount: processedRecords.length
+    }, {
+      returning: true
     });
+
+    // Get the actual invoice ID (upsert returns array with instance and created flag)
+    const invoiceRecord = Array.isArray(invoiceResult) ? invoiceResult[0] : invoiceResult;
+    const invoiceId = invoiceRecord.id;
+
+    // Delete existing line items for this invoice (in case of regeneration)
+    await db.InvoiceLineItem.destroy({
+      where: { invoiceId: invoiceId }
+    });
+
+    // Create line items
+    for (const lineItem of lineItems) {
+      await db.InvoiceLineItem.create({
+        invoiceId: invoiceId,
+        ...lineItem
+      });
+    }
+
+    // Update first_invoice_generated_at for records that had first month proration
+    for (const record of records) {
+      const proration = determineProration(record, invoiceDate, 'fundDate', 'payoffDate');
+      if (proration.isFirstMonth && !record.firstInvoiceGeneratedAt) {
+        await db.Promissory.update(
+          { firstInvoiceGeneratedAt: new Date() },
+          { where: { id: record.id } }
+        );
+      }
+    }
 
     console.log(`✓ Successfully processed ${investorName}: ${records.length} records, $${monthlyInterest.toFixed(2)}/month`);
 
@@ -706,13 +1062,25 @@ async function processCapInvestor(browser, investorName, invoiceDate, logoBase64
   try {
     console.log(`Processing cap investor: ${investorName}`);
 
-    // Get funded records from capinvestor table (only funded loans)
+    // Calculate the period we're covering (invoices are in arrears)
+    const invoice = new Date(invoiceDate);
+    const invoiceMonth = invoice.getMonth();
+    const invoiceYear = invoice.getFullYear();
+    const coveredYear = invoiceMonth === 0 ? invoiceYear - 1 : invoiceYear;
+    const coveredMonth = invoiceMonth === 0 ? 11 : invoiceMonth - 1;
+    const periodStart = new Date(coveredYear, coveredMonth, 1);
+
+    // Get funded records from capinvestor table
+    // Include loans with payoff_date >= period start (to include final prorated invoice)
     const records = await db.CapInvestor.findAll({
       where: {
         investorName: investorName,
-        loanStatus: 'Funded'
-      },
-      raw: true
+        loanStatus: 'Funded',
+        [db.Sequelize.Op.or]: [
+          { payoffDate: null },
+          { payoffDate: { [db.Sequelize.Op.gte]: periodStart } }
+        ]
+      }
     });
 
     if (records.length === 0) {
@@ -720,8 +1088,71 @@ async function processCapInvestor(browser, investorName, invoiceDate, logoBase64
       return { success: false, reason: 'no_records' };
     }
 
-    // Generate HTML
-    const html = generateInvoiceHTML(investorName, 'capinvestor', records, invoiceDate, logoBase64);
+    // Process each record and apply proration logic
+    const processedRecords = [];
+    const lineItems = [];
+
+    for (const record of records) {
+      const proration = determineProration(record, invoiceDate, 'fundDate', 'payoffDate');
+
+      let finalAmount = parseFloat(record.payment) || 0;
+      let isProrated = false;
+      let prorationType = null;
+      let daysInPeriod = getDaysInMonth(coveredYear, coveredMonth);
+      let totalDaysInMonth = daysInPeriod;
+
+      // Apply first month proration if applicable
+      if (proration.isFirstMonth) {
+        const prorationCalc = calculateFirstMonthProration(record.fundDate, finalAmount);
+        if (prorationCalc) {
+          finalAmount = prorationCalc.proratedAmount;
+          isProrated = true;
+          prorationType = 'first_month';
+          daysInPeriod = prorationCalc.daysInPeriod;
+          totalDaysInMonth = prorationCalc.totalDaysInMonth;
+          console.log(`  → First month proration for ${record.propertyAddress}: $${finalAmount} (${daysInPeriod}/${totalDaysInMonth} days)`);
+        }
+      }
+
+      // Apply last month proration if applicable
+      if (proration.isLastMonth) {
+        const prorationCalc = calculateLastMonthProration(record.payoffDate, parseFloat(record.payment) || 0);
+        if (prorationCalc) {
+          finalAmount = prorationCalc.proratedAmount;
+          isProrated = true;
+          prorationType = 'last_month';
+          daysInPeriod = prorationCalc.daysInPeriod;
+          totalDaysInMonth = prorationCalc.totalDaysInMonth;
+          console.log(`  → Last month proration for ${record.propertyAddress}: $${finalAmount} (${daysInPeriod}/${totalDaysInMonth} days)`);
+        }
+      }
+
+      // Add to processed records for invoice display
+      processedRecords.push({
+        ...record.toJSON(),
+        payment: finalAmount,
+        isProrated,
+        prorationType
+      });
+
+      // Prepare line item data
+      lineItems.push({
+        loanTable: 'capinvestor',
+        loanId: record.id,
+        loanIdentifier: `${record.propertyAddress} - ${record.investorName}`,
+        originalAmount: parseFloat(record.payment) || 0,
+        proratedAmount: finalAmount,
+        isProrated,
+        prorationType,
+        periodStartDate: proration.periodStart,
+        periodEndDate: proration.periodEnd,
+        daysInPeriod,
+        totalDaysInMonth
+      });
+    }
+
+    // Generate HTML with processed records
+    const html = generateInvoiceHTML(investorName, 'capinvestor', processedRecords, invoiceDate, logoBase64);
 
     // Generate PDF using Puppeteer
     const page = await browser.newPage();
@@ -752,9 +1183,9 @@ async function processCapInvestor(browser, investorName, invoiceDate, logoBase64
     // Upload to S3
     const s3Url = await uploadToS3(pdfBuffer, s3Key);
 
-    // Calculate totals
-    const totalAmount = records.reduce((sum, r) => sum + (parseFloat(r.loanAmount) || 0), 0);
-    const monthlyInterest = records.reduce((sum, r) => sum + (parseFloat(r.payment) || 0), 0);
+    // Calculate totals from processed records
+    const totalAmount = processedRecords.reduce((sum, r) => sum + (parseFloat(r.loanAmount) || 0), 0);
+    const monthlyInterest = processedRecords.reduce((sum, r) => sum + (parseFloat(r.payment) || 0), 0);
 
     // Save to database
     // Format date as YYYY-MM-DD without timezone conversion
@@ -763,7 +1194,7 @@ async function processCapInvestor(browser, investorName, invoiceDate, logoBase64
     const day = String(invoiceDate.getDate()).padStart(2, '0');
     const invoiceDateStr = `${year}-${month}-${day}`;
 
-    await db.Invoice.upsert({
+    const [invoiceResult, created] = await db.Invoice.upsert({
       businessName: investorName,
       role: 'capinvestor',
       invoiceDate: invoiceDateStr,
@@ -771,8 +1202,38 @@ async function processCapInvestor(browser, investorName, invoiceDate, logoBase64
       s3Key: s3Key,
       s3Url: s3Url,
       totalAmount: monthlyInterest,
-      recordCount: records.length
+      recordCount: processedRecords.length
+    }, {
+      returning: true
     });
+
+    // Get the actual invoice ID (upsert returns array with instance and created flag)
+    const invoiceRecord = Array.isArray(invoiceResult) ? invoiceResult[0] : invoiceResult;
+    const invoiceId = invoiceRecord.id;
+
+    // Delete existing line items for this invoice (in case of regeneration)
+    await db.InvoiceLineItem.destroy({
+      where: { invoiceId: invoiceId }
+    });
+
+    // Create line items
+    for (const lineItem of lineItems) {
+      await db.InvoiceLineItem.create({
+        invoiceId: invoiceId,
+        ...lineItem
+      });
+    }
+
+    // Update first_invoice_generated_at for records that had first month proration
+    for (const record of records) {
+      const proration = determineProration(record, invoiceDate, 'fundDate', 'payoffDate');
+      if (proration.isFirstMonth && !record.firstInvoiceGeneratedAt) {
+        await db.CapInvestor.update(
+          { firstInvoiceGeneratedAt: new Date() },
+          { where: { id: record.id } }
+        );
+      }
+    }
 
     console.log(`✓ Successfully processed ${investorName}: ${records.length} records, $${monthlyInterest.toFixed(2)}/month`);
 
@@ -847,12 +1308,10 @@ async function processCapInvestor(browser, investorName, invoiceDate, logoBase64
  */
 async function sendSummaryReport(allRecipients, invoiceDate) {
   try {
-    const nodemailer = require('nodemailer');
     const { google } = require('googleapis');
-    const OAuth2 = google.auth.OAuth2;
 
-    // Create OAuth2 client
-    const oauth2Client = new OAuth2(
+    // Create OAuth2 client for Gmail API
+    const oauth2Client = new google.auth.OAuth2(
       process.env.EMAIL_CLIENT_ID,
       process.env.EMAIL_CLIENT_SECRET,
       'https://developers.google.com/oauthplayground'
@@ -862,20 +1321,8 @@ async function sendSummaryReport(allRecipients, invoiceDate) {
       refresh_token: process.env.EMAIL_REFRESH_TOKEN
     });
 
-    const accessToken = await oauth2Client.getAccessToken();
-
-    // Create transporter
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        type: 'OAuth2',
-        user: process.env.EMAIL_USER,
-        clientId: process.env.EMAIL_CLIENT_ID,
-        clientSecret: process.env.EMAIL_CLIENT_SECRET,
-        refreshToken: process.env.EMAIL_REFRESH_TOKEN,
-        accessToken: accessToken.token
-      }
-    });
+    // Create Gmail API client
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
     // Format date
     const formattedDate = invoiceDate.toLocaleDateString('en-US', {
@@ -1025,11 +1472,32 @@ async function sendSummaryReport(allRecipients, invoiceDate) {
       'benjamin.frankstein@gmail.com'
     ];
 
-    await transporter.sendMail({
-      from: `${process.env.EMAIL_FROM_NAME} <${process.env.EMAIL_USER}>`,
-      to: managementEmails.join(', '),
-      subject: `Invoice Generation Report - ${formattedDate}`,
-      html: html
+    // Create MIME message
+    const boundary = `boundary_${Date.now()}_${Math.random().toString(36).substring(2)}`;
+    const messageParts = [];
+
+    messageParts.push(`To: ${managementEmails.join(', ')}`);
+    messageParts.push(`From: ${process.env.EMAIL_FROM_NAME} <${process.env.EMAIL_USER}>`);
+    messageParts.push(`Subject: Invoice Generation Report - ${formattedDate}`);
+    messageParts.push('MIME-Version: 1.0');
+    messageParts.push(`Content-Type: text/html; charset=UTF-8`);
+    messageParts.push('');
+    messageParts.push(html);
+
+    const mimeMessage = messageParts.join('\r\n');
+
+    // Encode and send via Gmail API
+    const encodedMessage = Buffer.from(mimeMessage)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: {
+        raw: encodedMessage
+      }
     });
 
     console.log('\n✓ Summary report sent to management');

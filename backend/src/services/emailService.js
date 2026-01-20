@@ -1,55 +1,88 @@
 /**
- * Email Service - Gmail OAuth2 with Nodemailer
- * Handles sending invoice emails to clients and investors
+ * Email Service - Gmail API (REST/HTTPS) with Nodemailer MIME builder
+ * Handles sending invoice emails to clients and investors using Gmail API
+ * Uses nodemailer to build proper MIME messages
  */
 
-const nodemailer = require('nodemailer');
 const { google } = require('googleapis');
+const nodemailer = require('nodemailer');
 const db = require('../models');
 
-const OAuth2 = google.auth.OAuth2;
-
 /**
- * Create OAuth2 client for Gmail
+ * Create OAuth2 client for Gmail API
  */
 function createOAuth2Client() {
-  return new OAuth2(
+  const oauth2Client = new google.auth.OAuth2(
     process.env.EMAIL_CLIENT_ID,
     process.env.EMAIL_CLIENT_SECRET,
-    'https://developers.google.com/oauthplayground' // Redirect URI
+    'https://developers.google.com/oauthplayground'
   );
-}
-
-/**
- * Create Nodemailer transporter with OAuth2
- */
-async function createTransporter() {
-  const oauth2Client = createOAuth2Client();
 
   oauth2Client.setCredentials({
     refresh_token: process.env.EMAIL_REFRESH_TOKEN
   });
 
+  return oauth2Client;
+}
+
+/**
+ * Create Gmail API client
+ */
+async function createGmailClient() {
   try {
-    const accessToken = await oauth2Client.getAccessToken();
-
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        type: 'OAuth2',
-        user: process.env.EMAIL_USER,
-        clientId: process.env.EMAIL_CLIENT_ID,
-        clientSecret: process.env.EMAIL_CLIENT_SECRET,
-        refreshToken: process.env.EMAIL_REFRESH_TOKEN,
-        accessToken: accessToken.token
-      }
-    });
-
-    return transporter;
+    console.log('     → Creating Gmail API client...');
+    const oauth2Client = createOAuth2Client();
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+    console.log('     → Gmail API client created');
+    return gmail;
   } catch (error) {
-    console.error('Error creating email transporter:', error.message);
+    console.error('Error creating Gmail API client:', error.message);
     throw error;
   }
+}
+
+/**
+ * Create MIME message for Gmail API using nodemailer's message builder
+ * This ensures proper MIME encoding that Gmail can preview
+ */
+async function createMimeMessage(to, from, replyTo, subject, textContent, htmlContent, attachments = []) {
+  return new Promise((resolve, reject) => {
+    const mailOptions = {
+      from: from,
+      to: to,
+      replyTo: replyTo,
+      subject: subject,
+      text: textContent,
+      html: htmlContent,
+      attachments: attachments.map(att => ({
+        filename: att.filename,
+        content: att.content,
+        contentType: att.contentType
+      }))
+    };
+
+    // Create a nodemailer transport (we won't use it to send, just to build the message)
+    const transport = nodemailer.createTransport({
+      streamTransport: true,
+      newline: 'unix'
+    });
+
+    // Build the message
+    const mail = transport.sendMail(mailOptions, (err, info) => {
+      if (err) {
+        reject(err);
+      } else {
+        // Read the message stream
+        let message = '';
+        info.message.on('data', (chunk) => {
+          message += chunk.toString('utf8');
+        });
+        info.message.on('end', () => {
+          resolve(message);
+        });
+      }
+    });
+  });
 }
 
 /**
@@ -334,8 +367,8 @@ async function sendInvoiceEmail(recipientEmail, businessName, role, pdfBuffer, f
     console.log(`  → Using email template: ${templateName}`);
     console.log(`     Subject: ${template.subject.substring(0, 50)}${template.subject.length > 50 ? '...' : ''}`);
 
-    // Create transporter
-    const transporter = await createTransporter();
+    // Create Gmail API client
+    const gmail = await createGmailClient();
 
     // Format date for subject (without timezone conversion)
     const year = invoiceDate.getUTCFullYear();
@@ -375,34 +408,47 @@ async function sendInvoiceEmail(recipientEmail, businessName, role, pdfBuffer, f
     const subject = replaceTemplateVariables(template.subject, templateData);
 
     // Generate email HTML and text with template
+    console.log(`  → Generating email content...`);
     const html = await generateInvoiceEmailHTML(businessName, role, invoiceDate, totalAmount, template);
     const text = await generateInvoiceEmailText(businessName, role, invoiceDate, totalAmount, template);
 
-    // Email options
-    const mailOptions = {
-      from: `${process.env.EMAIL_FROM_NAME} <${process.env.EMAIL_USER}>`,
-      to: recipientEmail,
-      replyTo: process.env.EMAIL_REPLY_TO || process.env.EMAIL_USER,
-      subject: subject,
-      text: text,
-      html: html,
-      attachments: [
-        {
-          filename: fileName,
-          content: pdfBuffer,
-          contentType: 'application/pdf'
-        }
-      ]
-    };
+    // Create MIME message using nodemailer (ensures proper encoding)
+    console.log(`  → Creating MIME message (PDF: ${(pdfBuffer.length / 1024).toFixed(2)} KB)...`);
+    const mimeMessage = await createMimeMessage(
+      recipientEmail,
+      `${process.env.EMAIL_FROM_NAME} <${process.env.EMAIL_USER}>`,
+      process.env.EMAIL_REPLY_TO || process.env.EMAIL_USER,
+      subject,
+      text,
+      html,
+      [{
+        filename: fileName,
+        content: pdfBuffer,
+        contentType: 'application/pdf'
+      }]
+    );
 
-    // Send email
-    const info = await transporter.sendMail(mailOptions);
+    // Encode message in base64url format
+    const encodedMessage = Buffer.from(mimeMessage)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
 
-    console.log(`✓ Email sent to ${recipientEmail}: ${info.messageId}`);
+    // Send email via Gmail API
+    console.log(`  → Sending email via Gmail API to ${recipientEmail}...`);
+    const result = await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: {
+        raw: encodedMessage
+      }
+    });
+
+    console.log(`✓ Email sent to ${recipientEmail}: ${result.data.id}`);
 
     return {
       success: true,
-      messageId: info.messageId,
+      messageId: result.data.id,
       recipient: recipientEmail
     };
 
@@ -589,31 +635,42 @@ async function sendPasswordResetEmail(recipientEmail, firstName, resetToken) {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     const resetLink = `${frontendUrl}/reset-password?token=${resetToken}`;
 
-    // Create transporter
-    const transporter = await createTransporter();
+    // Create Gmail API client
+    const gmail = await createGmailClient();
 
     // Generate email HTML and text
     const html = generatePasswordResetEmailHTML(firstName, resetLink);
     const text = generatePasswordResetEmailText(firstName, resetLink);
 
-    // Email options
-    const mailOptions = {
-      from: `${process.env.EMAIL_FROM_NAME} <${process.env.EMAIL_USER}>`,
-      to: recipientEmail,
-      replyTo: process.env.EMAIL_REPLY_TO || process.env.EMAIL_USER,
-      subject: 'Password Reset Request - Coastal Private Lending',
-      text: text,
-      html: html
-    };
+    // Create MIME message
+    const mimeMessage = await createMimeMessage(
+      recipientEmail,
+      `${process.env.EMAIL_FROM_NAME} <${process.env.EMAIL_USER}>`,
+      process.env.EMAIL_REPLY_TO || process.env.EMAIL_USER,
+      'Password Reset Request - Coastal Private Lending',
+      text,
+      html
+    );
 
-    // Send email
-    const info = await transporter.sendMail(mailOptions);
+    // Encode and send via Gmail API
+    const encodedMessage = Buffer.from(mimeMessage)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
 
-    console.log(`✓ Password reset email sent to ${recipientEmail}: ${info.messageId}`);
+    const result = await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: {
+        raw: encodedMessage
+      }
+    });
+
+    console.log(`✓ Password reset email sent to ${recipientEmail}: ${result.data.id}`);
 
     return {
       success: true,
-      messageId: info.messageId,
+      messageId: result.data.id,
       recipient: recipientEmail
     };
 
@@ -633,20 +690,37 @@ async function sendPasswordResetEmail(recipientEmail, firstName, resetToken) {
  */
 async function testEmailConfiguration(testRecipient) {
   try {
-    const transporter = await createTransporter();
+    const gmail = await createGmailClient();
 
-    const mailOptions = {
-      from: `${process.env.EMAIL_FROM_NAME} <${process.env.EMAIL_USER}>`,
-      to: testRecipient,
-      subject: 'Test Email - Coastal Private Lending Invoice System',
-      text: 'This is a test email from your Coastal Private Lending invoice system. If you received this, your email configuration is working correctly!',
-      html: '<p>This is a test email from your <strong>Coastal Private Lending invoice system</strong>.</p><p>If you received this, your email configuration is working correctly! ✅</p>'
-    };
+    const text = 'This is a test email from your Coastal Private Lending invoice system. If you received this, your email configuration is working correctly!';
+    const html = '<p>This is a test email from your <strong>Coastal Private Lending invoice system</strong>.</p><p>If you received this, your email configuration is working correctly! ✅</p>';
 
-    const info = await transporter.sendMail(mailOptions);
+    // Create MIME message
+    const mimeMessage = await createMimeMessage(
+      testRecipient,
+      `${process.env.EMAIL_FROM_NAME} <${process.env.EMAIL_USER}>`,
+      process.env.EMAIL_REPLY_TO || process.env.EMAIL_USER,
+      'Test Email - Coastal Private Lending Invoice System',
+      text,
+      html
+    );
 
-    console.log('✓ Test email sent successfully:', info.messageId);
-    return { success: true, messageId: info.messageId };
+    // Encode and send via Gmail API
+    const encodedMessage = Buffer.from(mimeMessage)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    const result = await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: {
+        raw: encodedMessage
+      }
+    });
+
+    console.log('✓ Test email sent successfully:', result.data.id);
+    return { success: true, messageId: result.data.id };
 
   } catch (error) {
     console.error('✗ Test email failed:', error.message);
@@ -845,8 +919,8 @@ async function sendWelcomeEmail(recipientEmail, firstName, temporaryPassword) {
     // Get frontend URL from environment or use default
     const portalUrl = process.env.FRONTEND_URL || 'https://cplportal.com';
 
-    // Create transporter
-    const transporter = await createTransporter();
+    // Create Gmail API client
+    const gmail = await createGmailClient();
 
     // Generate email HTML and text with template
     const html = generateWelcomeEmailHTML(firstName, recipientEmail, temporaryPassword, portalUrl, template);
@@ -863,24 +937,35 @@ async function sendWelcomeEmail(recipientEmail, firstName, temporaryPassword) {
     // Replace variables in subject
     const subject = replaceWelcomeTemplateVariables(template.subject, templateData);
 
-    // Email options
-    const mailOptions = {
-      from: `${process.env.EMAIL_FROM_NAME} <${process.env.EMAIL_USER}>`,
-      to: recipientEmail,
-      replyTo: process.env.EMAIL_REPLY_TO || process.env.EMAIL_USER,
-      subject: subject,
-      text: text,
-      html: html
-    };
+    // Create MIME message
+    const mimeMessage = await createMimeMessage(
+      recipientEmail,
+      `${process.env.EMAIL_FROM_NAME} <${process.env.EMAIL_USER}>`,
+      process.env.EMAIL_REPLY_TO || process.env.EMAIL_USER,
+      subject,
+      text,
+      html
+    );
 
-    // Send email
-    const info = await transporter.sendMail(mailOptions);
+    // Encode and send via Gmail API
+    const encodedMessage = Buffer.from(mimeMessage)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
 
-    console.log(`✓ Welcome email sent to ${recipientEmail}: ${info.messageId}`);
+    const result = await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: {
+        raw: encodedMessage
+      }
+    });
+
+    console.log(`✓ Welcome email sent to ${recipientEmail}: ${result.data.id}`);
 
     return {
       success: true,
-      messageId: info.messageId,
+      messageId: result.data.id,
       recipient: recipientEmail
     };
 
