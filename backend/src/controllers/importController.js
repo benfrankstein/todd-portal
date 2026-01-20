@@ -55,10 +55,26 @@ exports.syncAllSheets = async (req, res) => {
       });
     }
 
+    // Check if service account key is configured
+    if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+      return res.status(500).json({
+        success: false,
+        error: 'GOOGLE_SERVICE_ACCOUNT_KEY not configured. Please set the environment variable on Render.'
+      });
+    }
+
     console.log('Starting sync of all sheets...');
 
     // Initialize Google Sheets API
-    await googleSheetsService.initialize();
+    try {
+      await googleSheetsService.initialize();
+    } catch (initError) {
+      console.error('Google Sheets initialization error:', initError);
+      return res.status(500).json({
+        success: false,
+        error: `Failed to initialize Google Sheets API: ${initError.message}`
+      });
+    }
 
     // Sync Funded data
     console.log('Syncing Funded data...');

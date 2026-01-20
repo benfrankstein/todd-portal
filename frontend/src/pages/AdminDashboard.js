@@ -175,13 +175,15 @@ function AdminDashboard() {
 
       setSyncResults(data.results);
       setShowSyncModal(true);
+      showNotification('success', 'Data synced successfully from Google Sheets!');
 
       // Reload data after sync
       await loadData();
     } catch (error) {
       console.error('Sync error:', error);
-      setError(error.response?.data?.error || 'Failed to sync data. Please try again.');
-      alert('Failed to sync data from Google Sheets. Please try again.');
+      const errorMsg = error.response?.data?.error || 'Failed to sync data. Please try again.';
+      setError(errorMsg);
+      showNotification('error', `Sync failed: ${errorMsg}`);
     } finally {
       setSyncing(false);
     }
@@ -257,6 +259,14 @@ function AdminDashboard() {
       {notification.show && (
         <div className={`notification-banner ${notification.type}`}>
           {notification.type === 'success' ? '✓' : '✗'} {notification.message}
+        </div>
+      )}
+
+      {/* Syncing Banner */}
+      {syncing && (
+        <div className="syncing-banner">
+          <div className="syncing-spinner"></div>
+          <span>Syncing data from Google Sheets...</span>
         </div>
       )}
 
