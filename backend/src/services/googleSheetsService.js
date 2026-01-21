@@ -154,13 +154,25 @@ class GoogleSheetsService {
 
   /**
    * Parse date values
+   * Creates dates at noon UTC to prevent timezone shift issues
+   * (e.g., Dec 31 showing as Dec 30 due to timezone conversion)
    */
   parseDate(value) {
     if (!value) return null;
 
     try {
+      // First parse the date string
       const date = new Date(value);
-      return isNaN(date.getTime()) ? null : date;
+      if (isNaN(date.getTime())) return null;
+
+      // Extract year, month, day in local timezone
+      const year = date.getFullYear();
+      const month = date.getMonth();
+      const day = date.getDate();
+
+      // Create a new Date at noon UTC to avoid timezone shift issues
+      // This ensures Dec 31 stays Dec 31 regardless of timezone
+      return new Date(Date.UTC(year, month, day, 12, 0, 0, 0));
     } catch (error) {
       return null;
     }

@@ -44,6 +44,8 @@ function getDaysInMonth(year, month) {
  * Invoice is generated on the 1st of the month following the fund/closing date
  * and covers the period from fund/closing date to end of that month
  *
+ * IMPORTANT: Always uses 30-day months for proration calculations
+ *
  * @param {Date} fundDate - The fund/closing date
  * @param {number} monthlyPayment - The full monthly payment amount
  * @returns {Object} Proration details or null if not applicable
@@ -64,14 +66,14 @@ function calculateFirstMonthProration(fundDate, monthlyPayment) {
   // Calculate days in period (inclusive)
   const daysInPeriod = daysInFundMonth - fundDay + 1;
 
-  // Calculate prorated amount
-  const proratedAmount = (monthlyPayment / daysInFundMonth) * daysInPeriod;
+  // ALWAYS use 30 days for proration calculation
+  const proratedAmount = (monthlyPayment / 30) * daysInPeriod;
 
   return {
     periodStart,
     periodEnd,
     daysInPeriod,
-    totalDaysInMonth: daysInFundMonth,
+    totalDaysInMonth: 30, // Always 30 for consistency
     proratedAmount: Math.round(proratedAmount * 100) / 100 // Round to 2 decimals
   };
 }
@@ -80,6 +82,8 @@ function calculateFirstMonthProration(fundDate, monthlyPayment) {
  * Calculate proration for last month invoice
  * Invoice is generated on the 1st of the month following the payoff date
  * and covers the period from start of payoff month to the payoff date
+ *
+ * IMPORTANT: Always uses 30-day months for proration calculations
  *
  * @param {Date} payoffDate - The payoff date
  * @param {number} monthlyPayment - The full monthly payment amount
@@ -100,14 +104,14 @@ function calculateLastMonthProration(payoffDate, monthlyPayment) {
   // Calculate days in period (inclusive)
   const daysInPeriod = payoffDay;
 
-  // Calculate prorated amount
-  const proratedAmount = (monthlyPayment / daysInPayoffMonth) * daysInPeriod;
+  // ALWAYS use 30 days for proration calculation
+  const proratedAmount = (monthlyPayment / 30) * daysInPeriod;
 
   return {
     periodStart,
     periodEnd,
     daysInPeriod,
-    totalDaysInMonth: daysInPayoffMonth,
+    totalDaysInMonth: 30, // Always 30 for consistency
     proratedAmount: Math.round(proratedAmount * 100) / 100 // Round to 2 decimals
   };
 }
@@ -275,8 +279,8 @@ function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase6
   } else if (role === 'investor') {
     totalInvested = records.reduce((sum, r) => sum + (parseFloat(r.loanAmount) || 0), 0);
     monthlyInterest = records.reduce((sum, r) => sum + (parseFloat(r.capitalPay) || 0), 0);
-    // Year-to-date is already aggregated per investor, just take first record's value
-    yearToDate = records.length > 0 ? (parseFloat(records[0].yearToDate) || 0) : 0;
+    // Sum up all year-to-date values from all loan records for this investor
+    yearToDate = records.reduce((sum, r) => sum + (parseFloat(r.yearToDate) || 0), 0);
   } else if (role === 'capinvestor') {
     totalInvested = records.reduce((sum, r) => sum + (parseFloat(r.loanAmount) || 0), 0);
     monthlyInterest = records.reduce((sum, r) => sum + (parseFloat(r.payment) || 0), 0);
@@ -311,6 +315,7 @@ function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase6
     tableHeaders = `
       <th>Property Address</th>
       <th>Loan Amount</th>
+      <th>Date Funded</th>
       <th>Interest Rate</th>
       <th>Interest Earned</th>
     `;
@@ -318,6 +323,7 @@ function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase6
       <tr class="${idx % 2 === 0 ? 'row-even' : 'row-odd'}">
         <td>${record.propertyAddress || 'No Address'}</td>
         <td>${formatCurrency(record.loanAmount)}</td>
+        <td>${formatDate(record.fundDate)}</td>
         <td>${formatPercent(record.interestRate)}</td>
         <td>${formatCurrency(record.payment)}</td>
       </tr>
@@ -594,8 +600,28 @@ async function processBusiness(browser, businessName, invoiceDate, logoBase64) {
     const periodStart = new Date(coveredYear, coveredMonth, 1);
 
     // Get records from funded table (Funded doesn't have payoff date, so no exclusion filter needed)
-    const records = await db.Funded.findAll({
+    const allRecords = await db.Funded.findAll({
       where: { businessName: businessName }
+    });
+
+    // Filter out loans where closingDate is in the same month+year as invoice date
+    // These loans should appear in NEXT month's invoice, not this one
+    // Use UTC to ensure consistent timezone handling
+    const records = allRecords.filter(record => {
+      if (!record.closingDate) return true; // Include if no closing date
+
+      const closingDate = new Date(record.closingDate);
+      const closingYear = closingDate.getUTCFullYear();
+      const closingMonth = closingDate.getUTCMonth();
+
+      // Exclude if closing date is in the same month+year as invoice date
+      const shouldExclude = (closingYear === invoiceYear && closingMonth === invoiceMonth);
+
+      if (shouldExclude) {
+        console.log(`  → Excluding ${record.projectAddress}: closed in ${closingMonth + 1}/${closingYear}, will appear in next month's invoice`);
+      }
+
+      return !shouldExclude;
     });
 
     if (records.length === 0) {
@@ -821,7 +847,7 @@ async function processInvestor(browser, investorName, invoiceDate, logoBase64) {
 
     // Get active records from promissory table
     // Include loans with payoff_date >= period start (to include final prorated invoice)
-    const records = await db.Promissory.findAll({
+    const allRecords = await db.Promissory.findAll({
       where: {
         investorName: investorName,
         [db.Sequelize.Op.or]: [
@@ -833,6 +859,26 @@ async function processInvestor(browser, investorName, invoiceDate, logoBase64) {
           { payoffDate: { [db.Sequelize.Op.gte]: periodStart } }
         ]
       }
+    });
+
+    // Filter out loans where fundDate is in the same month+year as invoice date
+    // These loans should appear in NEXT month's invoice, not this one
+    // Use UTC to ensure consistent timezone handling
+    const records = allRecords.filter(record => {
+      if (!record.fundDate) return true; // Include if no fund date
+
+      const fundDate = new Date(record.fundDate);
+      const fundYear = fundDate.getUTCFullYear();
+      const fundMonth = fundDate.getUTCMonth();
+
+      // Exclude if fund date is in the same month+year as invoice date
+      const shouldExclude = (fundYear === invoiceYear && fundMonth === invoiceMonth);
+
+      if (shouldExclude) {
+        console.log(`  → Excluding ${record.assetId || record.investorName}: funded in ${fundMonth + 1}/${fundYear}, will appear in next month's invoice`);
+      }
+
+      return !shouldExclude;
     });
 
     if (records.length === 0) {
@@ -1072,7 +1118,7 @@ async function processCapInvestor(browser, investorName, invoiceDate, logoBase64
 
     // Get funded records from capinvestor table
     // Include loans with payoff_date >= period start (to include final prorated invoice)
-    const records = await db.CapInvestor.findAll({
+    const allRecords = await db.CapInvestor.findAll({
       where: {
         investorName: investorName,
         loanStatus: 'Funded',
@@ -1081,6 +1127,26 @@ async function processCapInvestor(browser, investorName, invoiceDate, logoBase64
           { payoffDate: { [db.Sequelize.Op.gte]: periodStart } }
         ]
       }
+    });
+
+    // Filter out loans where fundDate is in the same month+year as invoice date
+    // These loans should appear in NEXT month's invoice, not this one
+    // Use UTC to ensure consistent timezone handling
+    const records = allRecords.filter(record => {
+      if (!record.fundDate) return true; // Include if no fund date
+
+      const fundDate = new Date(record.fundDate);
+      const fundYear = fundDate.getUTCFullYear();
+      const fundMonth = fundDate.getUTCMonth();
+
+      // Exclude if fund date is in the same month+year as invoice date
+      const shouldExclude = (fundYear === invoiceYear && fundMonth === invoiceMonth);
+
+      if (shouldExclude) {
+        console.log(`  → Excluding ${record.propertyAddress}: funded in ${fundMonth + 1}/${fundYear}, will appear in next month's invoice`);
+      }
+
+      return !shouldExclude;
     });
 
     if (records.length === 0) {
