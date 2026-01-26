@@ -754,6 +754,13 @@
   margin-top: 24px;
 }
 
+/* Add padding to bottom of close button in project detail modal */
+.project-modal .modal-actions {
+  padding: 0 32px 40px 32px;
+  margin-top: 16px;
+  margin-bottom: 0;
+}
+
 .button-primary,
 .button-secondary {
   flex: 1;
@@ -1249,7 +1256,7 @@
 .project-modal {
   max-width: 700px;
   border-radius: 20px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .project-modal .modal-header {
@@ -1279,6 +1286,10 @@
 .project-details {
   padding: 32px;
   background: #fafbfc;
+}
+
+.project-modal .project-details {
+  padding-bottom: 8px;
 }
 
 .detail-row {
@@ -2133,6 +2144,15 @@
 
 .invoice-table tbody tr:last-child td {
   border-bottom: none;
+}
+
+/* Proration Note */
+.proration-note {
+  font-size: 11px;
+  color: #6B7280;
+  font-style: italic;
+  margin-top: 4px;
+  font-weight: 400;
 }
 
 /* Premium Total Due Bar */

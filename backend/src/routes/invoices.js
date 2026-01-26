@@ -9,4 +9,7 @@ router.get('/my-invoices', authenticateToken, invoiceController.getMyInvoices);
 // Get all invoices (admin only)
 router.get('/all', authenticateToken, invoiceController.getAllInvoices);
 
+// Generate invoices (admin only)
+router.post('/generate', authenticateToken, invoiceController.generateInvoices);
+
 module.exports = router;

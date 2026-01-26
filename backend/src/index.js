@@ -27,6 +27,7 @@ const promissoryRoutes = require('./routes/promissory');
 const capInvestorRoutes = require('./routes/capinvestor');
 const invoiceRoutes = require('./routes/invoices');
 const emailTemplateRoutes = require('./routes/emailTemplates');
+const appSettingsRoutes = require('./routes/appSettings');
 
 app.get('/api/health', async (req, res) => {
   try {
@@ -53,6 +54,7 @@ app.use('/api/promissory', promissoryRoutes);
 app.use('/api/capinvestor', capInvestorRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/email-templates', emailTemplateRoutes);
+app.use('/api/settings', appSettingsRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

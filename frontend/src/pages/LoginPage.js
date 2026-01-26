@@ -54,7 +54,17 @@ function LoginPage() {
         return;
       }
 
-      // Not first time - send verification code and show phone verification
+      // Not first time - check if admin (skip phone verification for admins)
+      if (data.user.role === 'admin') {
+        // Admin users skip phone verification - log them in directly
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('user', JSON.stringify(data.user));
+        await auth.login(formData.email, formData.password);
+        // AuthContext will handle navigation
+        return;
+      }
+
+      // For non-admin users - send verification code and show phone verification
       localStorage.setItem('token', data.token);
       setLoggedInUser(data.user);
 
@@ -89,9 +99,17 @@ function LoginPage() {
   };
 
   const handlePasswordResetSuccess = async (phoneNumber) => {
-    // After successful password reset, send verification code
+    // After successful password reset
     setShowPasswordReset(false);
 
+    // If admin, skip phone verification and log them in directly
+    if (loggedInUser.role === 'admin') {
+      localStorage.setItem('user', JSON.stringify(loggedInUser));
+      window.location.href = '/';
+      return;
+    }
+
+    // For non-admin users, send verification code
     // Update logged in user with the new phone number
     const updatedUser = { ...loggedInUser, phoneNumber: phoneNumber };
     setLoggedInUser(updatedUser);
@@ -175,8 +193,9 @@ function LoginPage() {
         </div>
       </div>
 
-      {showPasswordReset && (
+      {showPasswordReset && loggedInUser && (
         <FirstTimePasswordReset
+          user={loggedInUser}
           onSuccess={handlePasswordResetSuccess}
         />
       )}

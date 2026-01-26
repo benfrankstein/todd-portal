@@ -175,6 +175,11 @@ export const invoiceAPI = {
   getAllInvoices: async () => {
     const response = await api.get('/invoices/all');
     return response.data;
+  },
+
+  generateInvoices: async () => {
+    const response = await api.post('/invoices/generate');
+    return response.data;
   }
 };
 
@@ -187,6 +192,24 @@ export const importAPI = {
 
   testConnection: async () => {
     const response = await api.get('/import/test');
+    return response.data;
+  }
+};
+
+// App Settings APIs
+export const settingsAPI = {
+  getSetting: async (key) => {
+    const response = await api.get(`/settings/${key}`);
+    return response.data;
+  },
+
+  updateSetting: async (key, value) => {
+    const response = await api.put(`/settings/${key}`, { value });
+    return response.data;
+  },
+
+  getAllSettings: async () => {
+    const response = await api.get('/settings');
     return response.data;
   }
 };

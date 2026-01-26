@@ -2,12 +2,13 @@ import React, { useState } from 'react';
 import { authAPI } from '../services/api';
 import '../styles/FirstTimePasswordReset.css';
 
-const FirstTimePasswordReset = ({ onSuccess, onCancel }) => {
+const FirstTimePasswordReset = ({ user, onSuccess, onCancel }) => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const isAdmin = user?.role === 'admin';
 
   const handlePasswordChange = (e) => {
     setPassword(e.target.value);
@@ -43,8 +44,8 @@ const FirstTimePasswordReset = ({ onSuccess, onCancel }) => {
       return;
     }
 
-    // Validate phone number is provided
-    if (!phoneNumber.trim()) {
+    // Validate phone number is provided (only for non-admin users)
+    if (!isAdmin && !phoneNumber.trim()) {
       setError('Phone number is required');
       return;
     }
@@ -65,7 +66,12 @@ const FirstTimePasswordReset = ({ onSuccess, onCancel }) => {
       <div className="password-reset-modal">
         <div className="password-reset-header">
           <h2>Welcome! Complete Your Profile</h2>
-          <p>You're logging in for the first time. Please create a new password and enter your phone number.</p>
+          <p>
+            {isAdmin
+              ? "You're logging in for the first time. Please create a new password."
+              : "You're logging in for the first time. Please create a new password and enter your phone number."
+            }
+          </p>
         </div>
 
         <form onSubmit={handleSubmit} className="password-reset-form">
@@ -99,18 +105,20 @@ const FirstTimePasswordReset = ({ onSuccess, onCancel }) => {
             />
           </div>
 
-          <div className="form-group">
-            <label htmlFor="phoneNumber">Phone Number</label>
-            <input
-              type="tel"
-              id="phoneNumber"
-              value={phoneNumber}
-              onChange={handlePhoneNumberChange}
-              placeholder="Enter your phone number"
-              required
-              disabled={loading}
-            />
-          </div>
+          {!isAdmin && (
+            <div className="form-group">
+              <label htmlFor="phoneNumber">Phone Number</label>
+              <input
+                type="tel"
+                id="phoneNumber"
+                value={phoneNumber}
+                onChange={handlePhoneNumberChange}
+                placeholder="Enter your phone number"
+                required
+                disabled={loading}
+              />
+            </div>
+          )}
 
           <div className="form-actions">
             <button

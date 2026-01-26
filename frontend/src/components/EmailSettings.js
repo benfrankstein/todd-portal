@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { settingsAPI } from '../services/api';
 import '../styles/EmailSettings.css';
 
 const EmailSettings = () => {
@@ -21,6 +22,10 @@ const EmailSettings = () => {
   const [sendingTest, setSendingTest] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+  // Summary report emails state
+  const [summaryEmails, setSummaryEmails] = useState('');
+  const [savingSummaryEmails, setSavingSummaryEmails] = useState(false);
 
   const templateLabels = {
     'invoice_client': 'Client Invoice Email',
@@ -49,6 +54,7 @@ const EmailSettings = () => {
 
   useEffect(() => {
     loadTemplates();
+    loadSummaryEmails();
   }, []);
 
   useEffect(() => {
@@ -70,6 +76,31 @@ const EmailSettings = () => {
       setMessage({ type: 'error', text: 'Failed to load email templates' });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadSummaryEmails = async () => {
+    try {
+      const data = await settingsAPI.getSetting('invoice_summary_emails');
+      setSummaryEmails(data.setting.value || '');
+    } catch (error) {
+      console.error('Error loading summary emails:', error);
+      // Don't show error message for this, as it's not critical
+    }
+  };
+
+  const handleSaveSummaryEmails = async () => {
+    try {
+      setSavingSummaryEmails(true);
+      setMessage({ type: '', text: '' });
+      await settingsAPI.updateSetting('invoice_summary_emails', summaryEmails);
+      setMessage({ type: 'success', text: 'Summary report recipients saved successfully!' });
+      setTimeout(() => setMessage({ type: '', text: '' }), 3000);
+    } catch (error) {
+      console.error('Error saving summary emails:', error);
+      setMessage({ type: 'error', text: error.response?.data?.error || 'Failed to save summary report recipients' });
+    } finally {
+      setSavingSummaryEmails(false);
     }
   };
 
@@ -223,8 +254,8 @@ const EmailSettings = () => {
     <div className="email-settings-container">
       <div className="email-settings-header">
         <div>
-          <h2>Email Template Settings</h2>
-          <p>Customize email templates for invoices, welcome messages, and notifications</p>
+          <h2>Email Settings</h2>
+          <p>Manage email templates and notification settings</p>
         </div>
       </div>
 
@@ -233,6 +264,50 @@ const EmailSettings = () => {
           {message.text}
         </div>
       )}
+
+      {/* Invoice Summary Report Recipients */}
+      <div className="settings-section" style={{ marginBottom: '40px', padding: '24px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+        <h3 style={{ margin: '0 0 12px 0', fontSize: '18px', color: '#1e293b' }}>Invoice Generation Summary Report</h3>
+        <p style={{ margin: '0 0 16px 0', fontSize: '14px', color: '#64748b' }}>
+          Enter email addresses (comma-separated) that should receive the invoice generation summary report.
+          This report is sent after the monthly invoice generation completes and includes details about all invoices sent.
+        </p>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+          <div style={{ flex: 1 }}>
+            <input
+              type="text"
+              value={summaryEmails}
+              onChange={(e) => setSummaryEmails(e.target.value)}
+              placeholder="email1@example.com, email2@example.com, email3@example.com"
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                fontSize: '14px',
+                border: '1px solid #cbd5e1',
+                borderRadius: '6px'
+              }}
+            />
+            <p style={{ margin: '8px 0 0 0', fontSize: '12px', color: '#64748b' }}>
+              Example: todd@coastalprivatelending.com, ashley@coastalprivatelending.com
+            </p>
+          </div>
+          <button
+            onClick={handleSaveSummaryEmails}
+            disabled={savingSummaryEmails}
+            className="button-primary"
+            style={{ marginTop: '0', whiteSpace: 'nowrap' }}
+          >
+            {savingSummaryEmails ? 'Saving...' : 'Save Recipients'}
+          </button>
+        </div>
+      </div>
+
+      <hr style={{ margin: '32px 0', border: 'none', borderTop: '1px solid #e2e8f0' }} />
+
+      <h3 style={{ margin: '0 0 16px 0', fontSize: '20px', color: '#1e293b' }}>Email Templates</h3>
+      <p style={{ margin: '0 0 24px 0', fontSize: '14px', color: '#64748b' }}>
+        Customize email templates for invoices, welcome messages, and notifications
+      </p>
 
       <div className="template-selector">
         <label>Select Template:</label>

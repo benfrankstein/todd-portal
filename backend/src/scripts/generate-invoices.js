@@ -325,7 +325,10 @@ function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase6
         <td>${formatCurrency(record.loanAmount)}</td>
         <td>${formatDate(record.fundDate)}</td>
         <td>${formatPercent(record.interestRate)}</td>
-        <td>${formatCurrency(record.payment)}</td>
+        <td>
+          ${formatCurrency(record.payment)}
+          ${record.isProrated && record.daysInPeriod ? `<div class="proration-note">Prorated ${record.daysInPeriod} out of 30 days</div>` : ''}
+        </td>
       </tr>
     `).join('');
   } else if (role === 'investor') {
@@ -340,7 +343,10 @@ function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase6
         <td>${formatDate(record.fundDate)}</td>
         <td>${formatCurrency(record.loanAmount)}</td>
         <td>${formatPercent(record.interestRate)}</td>
-        <td>${formatCurrency(record.capitalPay)}</td>
+        <td>
+          ${formatCurrency(record.capitalPay)}
+          ${record.isProrated && record.daysInPeriod ? `<div class="proration-note">Prorated ${record.daysInPeriod} out of 30 days</div>` : ''}
+        </td>
       </tr>
     `).join('');
   } else {
@@ -355,7 +361,10 @@ function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase6
         <td>${record.projectAddress || 'No Address'}</td>
         <td>${formatCurrency(record.loanAmount)}</td>
         <td>${formatPercent(record.interestRate)}</td>
-        <td>${formatCurrency(record.interestPayment)}</td>
+        <td>
+          ${formatCurrency(record.interestPayment)}
+          ${record.isProrated && record.daysInPeriod ? `<div class="proration-note">Prorated ${record.daysInPeriod} out of 30 days</div>` : ''}
+        </td>
       </tr>
     `).join('');
   }
@@ -660,7 +669,8 @@ async function processBusiness(browser, businessName, invoiceDate, logoBase64) {
         ...record.toJSON(),
         interestPayment: finalAmount,
         isProrated,
-        prorationType
+        prorationType,
+        daysInPeriod
       });
 
       // Prepare line item data
@@ -930,7 +940,8 @@ async function processInvestor(browser, investorName, invoiceDate, logoBase64) {
         ...record.toJSON(),
         capitalPay: finalAmount,
         isProrated,
-        prorationType
+        prorationType,
+        daysInPeriod
       });
 
       // Prepare line item data
@@ -1198,7 +1209,8 @@ async function processCapInvestor(browser, investorName, invoiceDate, logoBase64
         ...record.toJSON(),
         payment: finalAmount,
         isProrated,
-        prorationType
+        prorationType,
+        daysInPeriod
       });
 
       // Prepare line item data
@@ -1531,12 +1543,38 @@ async function sendSummaryReport(allRecipients, invoiceDate) {
 </html>
     `;
 
-    // Send email to management
-    const managementEmails = [
-      'todd@coastalprivatelending.com',
-      'ashley@coastalprivatelending.com',
-      'benjamin.frankstein@gmail.com'
-    ];
+    // Get management emails from database settings
+    let managementEmails = [];
+    try {
+      const setting = await db.AppSettings.findOne({
+        where: { settingKey: 'invoice_summary_emails' }
+      });
+
+      if (setting && setting.settingValue) {
+        // Split comma-separated emails and trim whitespace
+        managementEmails = setting.settingValue
+          .split(',')
+          .map(email => email.trim())
+          .filter(email => email.length > 0);
+      }
+
+      // Fallback to default emails if no setting found
+      if (managementEmails.length === 0) {
+        managementEmails = [
+          'todd@coastalprivatelending.com',
+          'ashley@coastalprivatelending.com',
+          'benjamin.frankstein@gmail.com'
+        ];
+      }
+    } catch (error) {
+      console.error('Failed to load summary email settings, using defaults:', error.message);
+      // Fallback to default emails on error
+      managementEmails = [
+        'todd@coastalprivatelending.com',
+        'ashley@coastalprivatelending.com',
+        'benjamin.frankstein@gmail.com'
+      ];
+    }
 
     // Create MIME message
     const boundary = `boundary_${Date.now()}_${Math.random().toString(36).substring(2)}`;
@@ -1769,15 +1807,31 @@ async function main() {
   console.log(`TOTAL: ${totalProcessed} successful, ${totalFailed} failed`);
   console.log(`EMAILS: ${totalEmailsSent} sent, ${totalNoEmail} no email found`);
 
-  process.exit(totalFailed > 0 ? 1 : 0);
+  // Return results instead of exiting (so we don't kill the server when called from API)
+  return {
+    success: totalFailed === 0,
+    stats: {
+      clients: stats.clients,
+      investors: stats.investors,
+      capinvestors: stats.capinvestors,
+      totalProcessed,
+      totalFailed,
+      totalEmailsSent,
+      totalNoEmail
+    }
+  };
 }
 
 // Run if executed directly
 if (require.main === module) {
-  main().catch(error => {
-    console.error('Fatal error:', error);
-    process.exit(1);
-  });
+  main()
+    .then(result => {
+      process.exit(result.success ? 0 : 1);
+    })
+    .catch(error => {
+      console.error('Fatal error:', error);
+      process.exit(1);
+    });
 }
 
 module.exports = { main };

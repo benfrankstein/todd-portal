@@ -103,10 +103,6 @@ exports.resetFirstTimePassword = async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
 
-    if (!phoneNumber || !phoneNumber.trim()) {
-      return res.status(400).json({ error: 'Phone number is required' });
-    }
-
     // Get user from auth middleware
     const user = await db.User.findByPk(req.user.id);
 
@@ -119,12 +115,25 @@ exports.resetFirstTimePassword = async (req, res) => {
       return res.status(400).json({ error: 'This endpoint is only for first-time password reset' });
     }
 
-    // Update password, phone number, and set firstTime to false
-    await user.update({
+    // Phone number is only required for non-admin users
+    if (user.role !== 'admin') {
+      if (!phoneNumber || !phoneNumber.trim()) {
+        return res.status(400).json({ error: 'Phone number is required' });
+      }
+    }
+
+    // Update password, phone number (if provided), and set firstTime to false
+    const updateData = {
       password: password, // Will be hashed by model hook
-      phoneNumber: phoneNumber,
       firstTime: false
-    });
+    };
+
+    // Only update phone number if provided (for non-admin users it's required, for admin it's optional)
+    if (phoneNumber && phoneNumber.trim()) {
+      updateData.phoneNumber = phoneNumber;
+    }
+
+    await user.update(updateData);
 
     res.json({
       success: true,

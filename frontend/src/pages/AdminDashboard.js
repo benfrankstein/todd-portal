@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { authAPI, importAPI } from '../services/api';
+import { authAPI, importAPI, invoiceAPI } from '../services/api';
 import EmailSettings from '../components/EmailSettings';
 import '../styles/Dashboard.css';
 
@@ -25,15 +25,15 @@ function AdminDashboard() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState('borrowers'); // 'borrowers', 'promissory', 'capinvestors'
+  const [activeTab, setActiveTab] = useState('users'); // 'users', 'borrowers', 'promissory', 'capinvestors', 'settings'
 
   // Sync state
   const [syncing, setSyncing] = useState(false);
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncResults, setSyncResults] = useState(null);
 
-  // Email Settings state
-  const [showEmailSettings, setShowEmailSettings] = useState(false);
+  // Invoice generation state
+  const [generatingInvoices, setGeneratingInvoices] = useState(false);
 
   // Delete user state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -189,6 +189,25 @@ function AdminDashboard() {
     }
   };
 
+  const handleGenerateInvoices = async () => {
+    try {
+      setGeneratingInvoices(true);
+      setError('');
+
+      // Call the generate invoices API endpoint
+      const data = await invoiceAPI.generateInvoices();
+
+      showNotification('success', 'Invoice generation started! This process may take several minutes. Invoices will be sent via email when complete.');
+    } catch (error) {
+      console.error('Invoice generation error:', error);
+      const errorMsg = error.response?.data?.error || 'Failed to start invoice generation. Please try again.';
+      setError(errorMsg);
+      showNotification('error', `Invoice generation failed: ${errorMsg}`);
+    } finally {
+      setGeneratingInvoices(false);
+    }
+  };
+
   const closeSyncModal = () => {
     setShowSyncModal(false);
     setSyncResults(null);
@@ -270,6 +289,14 @@ function AdminDashboard() {
         </div>
       )}
 
+      {/* Invoice Generation Banner */}
+      {generatingInvoices && (
+        <div className="syncing-banner">
+          <div className="syncing-spinner"></div>
+          <span>Generating invoices...</span>
+        </div>
+      )}
+
       <header className="dashboard-header">
         <div>
           <h1>Admin Dashboard</h1>
@@ -284,11 +311,11 @@ function AdminDashboard() {
             {syncing ? 'Syncing...' : 'Refresh Data'}
           </button>
           <button
-            onClick={() => setShowEmailSettings(!showEmailSettings)}
+            onClick={handleGenerateInvoices}
             className="sync-button"
-            style={{ background: showEmailSettings ? 'linear-gradient(135deg, #1e40af 0%, #3b82f6 100%)' : undefined }}
+            disabled={generatingInvoices}
           >
-            Email Settings
+            {generatingInvoices ? 'Generating...' : 'Generate Invoices'}
           </button>
           <button onClick={logout} className="logout-button">
             Logout
@@ -300,6 +327,13 @@ function AdminDashboard() {
         {/* Tab Navigation */}
         <div className="admin-tabs-container">
           <div className="admin-tabs">
+            <button
+              className={`admin-tab ${activeTab === 'users' ? 'active' : ''}`}
+              onClick={() => setActiveTab('users')}
+            >
+              Users
+              <span className="tab-count">{users.length}</span>
+            </button>
             <button
               className={`admin-tab ${activeTab === 'borrowers' ? 'active' : ''}`}
               onClick={() => setActiveTab('borrowers')}
@@ -321,125 +355,134 @@ function AdminDashboard() {
               Cap Investors
               <span className="tab-count">{capInvestors.length}</span>
             </button>
+            <button
+              className={`admin-tab ${activeTab === 'settings' ? 'active' : ''}`}
+              onClick={() => setActiveTab('settings')}
+            >
+              Settings
+            </button>
           </div>
 
           {/* Tab Content */}
           <div className="admin-tab-content">
-            {/* Search Bar */}
-            <div className="admin-tab-search">
-              <input
-                type="text"
-                className="admin-search-input"
-                placeholder={
-                  activeTab === 'borrowers' ? 'Search borrowers...' :
-                  activeTab === 'promissory' ? 'Search promissory...' :
-                  'Search cap investors...'
-                }
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-
-            {/* Scrollable Business List */}
-            <div className="admin-business-list">
-              {currentTabData.length > 0 ? (
-                currentTabData.map((item, index) => {
-                  const name = item.businessName || item.investorName;
-                  const role = activeTab === 'borrowers' ? 'borrower' : activeTab === 'promissory' ? 'promissory' : 'capinvestor';
-                  const itemUsers = users.filter(u => u.businessName === name && u.role === role);
-
-                  return (
-                    <div key={index} className="admin-business-item">
-                      <div className="admin-business-info">
-                        <div className="admin-business-name">{name}</div>
-                        <div className="admin-business-users">{itemUsers.length} user(s)</div>
-                      </div>
-                      <button
-                        onClick={() => {
-                          if (activeTab === 'borrowers') {
-                            openCreateUserModal(item);
-                          } else if (activeTab === 'promissory') {
-                            openCreateInvestorModal(item);
-                          } else {
-                            openCreateCapInvestorModal(item);
-                          }
-                        }}
-                        className="admin-create-user-button"
-                      >
-                        + Create User
-                      </button>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="admin-business-empty">
-                  {searchTerm ? 'No results found' : `No ${activeTab} available`}
+            {/* Data Tabs (Borrowers, Promissory, Cap Investors) */}
+            {['borrowers', 'promissory', 'capinvestors'].includes(activeTab) && (
+              <>
+                {/* Search Bar */}
+                <div className="admin-tab-search">
+                  <input
+                    type="text"
+                    className="admin-search-input"
+                    placeholder={
+                      activeTab === 'borrowers' ? 'Search borrowers...' :
+                      activeTab === 'promissory' ? 'Search promissory...' :
+                      'Search cap investors...'
+                    }
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
                 </div>
-              )}
-            </div>
+
+                {/* Scrollable Business List */}
+                <div className="admin-business-list">
+                  {currentTabData.length > 0 ? (
+                    currentTabData.map((item, index) => {
+                      const name = item.businessName || item.investorName;
+                      const role = activeTab === 'borrowers' ? 'borrower' : activeTab === 'promissory' ? 'promissory' : 'capinvestor';
+                      const itemUsers = users.filter(u => u.businessName === name && u.role === role);
+
+                      return (
+                        <div key={index} className="admin-business-item">
+                          <div className="admin-business-info">
+                            <div className="admin-business-name">{name}</div>
+                            <div className="admin-business-users">{itemUsers.length} user(s)</div>
+                          </div>
+                          <button
+                            onClick={() => {
+                              if (activeTab === 'borrowers') {
+                                openCreateUserModal(item);
+                              } else if (activeTab === 'promissory') {
+                                openCreateInvestorModal(item);
+                              } else {
+                                openCreateCapInvestorModal(item);
+                              }
+                            }}
+                            className="admin-create-user-button"
+                          >
+                            + Create User
+                          </button>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="admin-business-empty">
+                      {searchTerm ? 'No results found' : `No ${activeTab} available`}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* Users Tab */}
+            {activeTab === 'users' && (
+              <div className="admin-users-card">
+                <div className="admin-users-header">
+                  <h2>All Users</h2>
+                  <span className="admin-users-count">{users.length} total</span>
+                </div>
+                <div className="table-container">
+                  <table className="users-table">
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Email</th>
+                        <th>Business</th>
+                        <th>Role</th>
+                        <th>Status</th>
+                        <th>Last Login</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {users.map(u => (
+                        <tr key={u.id}>
+                          <td>{u.firstName} {u.lastName}</td>
+                          <td>{u.email}</td>
+                          <td>{u.businessName || '-'}</td>
+                          <td>
+                            <span className={`role-badge role-${u.role}`}>
+                              {u.role}
+                            </span>
+                          </td>
+                          <td>
+                            <span className={`status-badge ${u.isActive ? 'active' : 'inactive'}`}>
+                              {u.isActive ? 'Active' : 'Inactive'}
+                            </span>
+                          </td>
+                          <td>{u.lastLogin ? new Date(u.lastLogin).toLocaleDateString() : 'Never'}</td>
+                          <td>
+                            <button
+                              onClick={() => handleDeleteUserClick(u.id, `${u.firstName} ${u.lastName}`)}
+                              className="delete-user-button"
+                              title="Delete user"
+                            >
+                              🗑️
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Settings Tab */}
+            {activeTab === 'settings' && (
+              <EmailSettings />
+            )}
           </div>
         </div>
-
-        {/* Users Section */}
-        <section className="admin-users-section">
-          <div className="admin-users-card">
-            <div className="admin-users-header">
-              <h2>All Users</h2>
-              <span className="admin-users-count">{users.length} total</span>
-            </div>
-            <div className="table-container">
-              <table className="users-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Business</th>
-                    <th>Role</th>
-                    <th>Status</th>
-                    <th>Last Login</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map(u => (
-                    <tr key={u.id}>
-                      <td>{u.firstName} {u.lastName}</td>
-                      <td>{u.email}</td>
-                      <td>{u.businessName || '-'}</td>
-                      <td>
-                        <span className={`role-badge role-${u.role}`}>
-                          {u.role}
-                        </span>
-                      </td>
-                      <td>
-                        <span className={`status-badge ${u.isActive ? 'active' : 'inactive'}`}>
-                          {u.isActive ? 'Active' : 'Inactive'}
-                        </span>
-                      </td>
-                      <td>{u.lastLogin ? new Date(u.lastLogin).toLocaleDateString() : 'Never'}</td>
-                      <td>
-                        <button
-                          onClick={() => handleDeleteUserClick(u.id, `${u.firstName} ${u.lastName}`)}
-                          className="delete-user-button"
-                          title="Delete user"
-                        >
-                          🗑️
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </section>
-
-        {/* Email Settings Section */}
-        {showEmailSettings && (
-          <section className="admin-users-section" style={{ marginTop: '24px' }}>
-            <EmailSettings />
-          </section>
-        )}
       </div>
 
       {/* Create User Modal */}

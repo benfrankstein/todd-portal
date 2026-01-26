@@ -88,3 +88,43 @@ exports.getAllInvoices = async (req, res) => {
     res.status(500).json({ error: 'Failed to get invoices' });
   }
 };
+
+/**
+ * Generate invoices for all businesses and investors (admin only)
+ * POST /api/invoices/generate
+ */
+exports.generateInvoices = async (req, res) => {
+  try {
+    // Check if user is admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can generate invoices' });
+    }
+
+    // Import the invoice generation script
+    const { main: generateInvoicesMain } = require('../scripts/generate-invoices');
+
+    // Send response immediately to avoid timeout
+    res.json({
+      success: true,
+      message: 'Invoice generation started. This process may take several minutes.'
+    });
+
+    // Run invoice generation in background
+    console.log('Starting invoice generation...');
+    generateInvoicesMain()
+      .then((result) => {
+        console.log('\n✓ Invoice generation completed successfully!');
+        console.log(`  - Total processed: ${result.stats.totalProcessed}`);
+        console.log(`  - Emails sent: ${result.stats.totalEmailsSent}`);
+        console.log(`  - Server continues running normally\n`);
+      })
+      .catch(error => {
+        console.error('\n✗ Invoice generation failed:', error);
+        console.error('  - Server continues running normally\n');
+      });
+
+  } catch (error) {
+    console.error('Generate invoices error:', error);
+    res.status(500).json({ error: 'Failed to start invoice generation' });
+  }
+};
