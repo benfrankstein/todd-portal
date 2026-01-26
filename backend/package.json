@@ -9,8 +9,7 @@
     "test": "jest",
     "db:migrate": "sequelize-cli db:migrate",
     "db:migrate:undo": "sequelize-cli db:migrate:undo",
-    "db:seed": "sequelize-cli db:seed:all",
-    "postinstall": "node node_modules/puppeteer/install.mjs"
+    "db:seed": "sequelize-cli db:seed:all"
   },
   "keywords": [
     "lending",
@@ -20,6 +19,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@sparticuz/chromium": "^143.0.4",
     "aws-sdk": "^2.1692.0",
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
@@ -30,7 +30,7 @@
     "mongoose": "^8.0.3",
     "nodemailer": "^7.0.11",
     "pg": "^8.16.3",
-    "puppeteer": "^24.30.0",
+    "puppeteer-core": "^24.36.0",
     "sequelize": "^6.37.7",
     "sequelize-cli": "^6.6.3",
     "twilio": "^5.10.5"

@@ -13,7 +13,8 @@ try {
   console.log('dotenv not available - using environment variables from system');
 }
 
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
+const chromium = require('@sparticuz/chromium');
 const AWS = require('aws-sdk');
 const db = require('../models');
 const fs = require('fs').promises;
@@ -1651,18 +1652,9 @@ async function main() {
   // Launch Puppeteer
   console.log('Launching browser...');
   const browser = await puppeteer.launch({
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process',
-      '--disable-gpu'
-    ],
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
+    headless: chromium.headless,
+    args: chromium.args,
+    executablePath: await chromium.executablePath()
   });
 
   // Statistics
