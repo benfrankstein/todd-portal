@@ -639,7 +639,7 @@ async function processBusiness(browser, businessName, invoiceDate, logoBase64) {
       return { success: false, reason: 'no_records' };
     }
 
-    // Process each record and apply proration logic
+    // Process each record - NO proration for borrowers
     const processedRecords = [];
     const lineItems = [];
 
@@ -652,18 +652,7 @@ async function processBusiness(browser, businessName, invoiceDate, logoBase64) {
       let daysInPeriod = getDaysInMonth(coveredYear, coveredMonth);
       let totalDaysInMonth = daysInPeriod;
 
-      // Apply first month proration if applicable
-      if (proration.isFirstMonth) {
-        const prorationCalc = calculateFirstMonthProration(record.closingDate, finalAmount);
-        if (prorationCalc) {
-          finalAmount = prorationCalc.proratedAmount;
-          isProrated = true;
-          prorationType = 'first_month';
-          daysInPeriod = prorationCalc.daysInPeriod;
-          totalDaysInMonth = prorationCalc.totalDaysInMonth;
-          console.log(`  → First month proration for ${record.projectAddress}: $${finalAmount} (${daysInPeriod}/${totalDaysInMonth} days)`);
-        }
-      }
+      // Borrowers always pay full monthly amount - no proration
 
       // Add to processed records for invoice display
       processedRecords.push({
@@ -762,16 +751,7 @@ async function processBusiness(browser, businessName, invoiceDate, logoBase64) {
       });
     }
 
-    // Update first_invoice_generated_at for records that had first month proration
-    for (const record of records) {
-      const proration = determineProration(record, invoiceDate, 'closingDate', null);
-      if (proration.isFirstMonth && !record.firstInvoiceGeneratedAt) {
-        await db.Funded.update(
-          { firstInvoiceGeneratedAt: new Date() },
-          { where: { id: record.id } }
-        );
-      }
-    }
+    // No need to track first invoice for borrowers since we don't prorate
 
     console.log(`✓ Successfully processed ${businessName}: ${records.length} records, $${totalAmount.toFixed(2)}`);
 

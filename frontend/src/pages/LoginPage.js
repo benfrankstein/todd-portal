@@ -18,6 +18,7 @@ function LoginPage() {
   const [showPhoneVerification, setShowPhoneVerification] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [loggedInUser, setLoggedInUser] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   const navigate = useNavigate();
   const passwordInputRef = useRef(null);
@@ -163,17 +164,29 @@ function LoginPage() {
 
             <div className="form-group">
               <label htmlFor="password">Password</label>
-              <input
-                type="password"
-                id="password"
-                name="password"
-                value={formData.password}
-                onChange={handleChange}
-                placeholder="Enter your password"
-                required
-                disabled={loading}
-                ref={passwordInputRef}
-              />
+              <div className="password-input-wrapper">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  id="password"
+                  name="password"
+                  value={formData.password}
+                  onChange={handleChange}
+                  placeholder="Enter your password"
+                  required
+                  disabled={loading}
+                  ref={passwordInputRef}
+                />
+                <button
+                  type="button"
+                  className="password-toggle-btn"
+                  onClick={() => setShowPassword(!showPassword)}
+                  tabIndex="-1"
+                  disabled={loading}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? "👁️" : "👁️‍🗨️"}
+                </button>
+              </div>
               <div className="forgot-password-link">
                 <button
                   type="button"
