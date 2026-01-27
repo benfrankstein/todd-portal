@@ -625,6 +625,12 @@ async function processBusiness(browser, businessName, invoiceDate, logoBase64) {
       const closingYear = closingDate.getUTCFullYear();
       const closingMonth = closingDate.getUTCMonth();
 
+      // Exclude future-dated loans (closing date after the invoice date)
+      if (closingDate > invoiceDate) {
+        console.log(`  → Excluding ${record.projectAddress}: future closing date ${closingMonth + 1}/${closingYear}`);
+        return false;
+      }
+
       // Calculate the previous month (handle year boundary)
       const prevMonth = invoiceMonth === 0 ? 11 : invoiceMonth - 1;
       const prevMonthYear = invoiceMonth === 0 ? invoiceYear - 1 : invoiceYear;
@@ -846,18 +852,34 @@ async function processInvestor(browser, investorName, invoiceDate, logoBase64) {
     const coveredMonth = invoiceMonth === 0 ? 11 : invoiceMonth - 1;
     const periodStart = new Date(coveredYear, coveredMonth, 1);
 
-    // Get active records from promissory table
-    // Include loans with payoff_date >= period start (to include final prorated invoice)
+    // Get records from promissory table
+    // Include active loans OR closed loans with payoff in the covered billing month
+    const periodEnd = new Date(coveredYear, coveredMonth, getDaysInMonth(coveredYear, coveredMonth));
+
     const allRecords = await db.Promissory.findAll({
       where: {
         investorName: investorName,
         [db.Sequelize.Op.or]: [
-          { status: null },
-          { status: { [db.Sequelize.Op.notILike]: 'closed' } }
-        ],
-        [db.Sequelize.Op.or]: [
-          { payoffDate: null },
-          { payoffDate: { [db.Sequelize.Op.gte]: periodStart } }
+          // Include active loans (no payoff date or payoff date not reached yet)
+          {
+            [db.Sequelize.Op.and]: [
+              { status: { [db.Sequelize.Op.iLike]: 'active' } },
+              {
+                [db.Sequelize.Op.or]: [
+                  { payoffDate: null },
+                  { payoffDate: { [db.Sequelize.Op.gt]: periodEnd } }
+                ]
+              }
+            ]
+          },
+          // Include closed loans with payoff in the covered billing month (for final prorated invoice)
+          {
+            [db.Sequelize.Op.and]: [
+              { status: { [db.Sequelize.Op.iLike]: 'closed' } },
+              { payoffDate: { [db.Sequelize.Op.gte]: periodStart } },
+              { payoffDate: { [db.Sequelize.Op.lte]: periodEnd } }
+            ]
+          }
         ]
       }
     });
@@ -871,6 +893,12 @@ async function processInvestor(browser, investorName, invoiceDate, logoBase64) {
       const fundDate = new Date(record.fundDate);
       const fundYear = fundDate.getUTCFullYear();
       const fundMonth = fundDate.getUTCMonth();
+
+      // Exclude future-dated loans (fund date after the invoice date)
+      if (fundDate > invoiceDate) {
+        console.log(`  → Excluding ${record.assetId || record.investorName}: future fund date ${fundMonth + 1}/${fundYear}`);
+        return false;
+      }
 
       // Exclude if fund date is in the same month+year as invoice date
       const shouldExclude = (fundYear === invoiceYear && fundMonth === invoiceMonth);
@@ -1118,15 +1146,34 @@ async function processCapInvestor(browser, investorName, invoiceDate, logoBase64
     const coveredMonth = invoiceMonth === 0 ? 11 : invoiceMonth - 1;
     const periodStart = new Date(coveredYear, coveredMonth, 1);
 
-    // Get funded records from capinvestor table
-    // Include loans with payoff_date >= period start (to include final prorated invoice)
+    // Get records from capinvestor table
+    // Include Funded loans OR closed loans with payoff in the covered billing month
+    const periodEnd = new Date(coveredYear, coveredMonth, getDaysInMonth(coveredYear, coveredMonth));
+
     const allRecords = await db.CapInvestor.findAll({
       where: {
         investorName: investorName,
-        loanStatus: 'Funded',
         [db.Sequelize.Op.or]: [
-          { payoffDate: null },
-          { payoffDate: { [db.Sequelize.Op.gte]: periodStart } }
+          // Include Funded loans (no payoff date or payoff date not reached yet)
+          {
+            [db.Sequelize.Op.and]: [
+              { loanStatus: 'Funded' },
+              {
+                [db.Sequelize.Op.or]: [
+                  { payoffDate: null },
+                  { payoffDate: { [db.Sequelize.Op.gt]: periodEnd } }
+                ]
+              }
+            ]
+          },
+          // Include closed/paid-off loans with payoff in the covered billing month (for final prorated invoice)
+          {
+            [db.Sequelize.Op.and]: [
+              { loanStatus: { [db.Sequelize.Op.ne]: 'Funded' } },
+              { payoffDate: { [db.Sequelize.Op.gte]: periodStart } },
+              { payoffDate: { [db.Sequelize.Op.lte]: periodEnd } }
+            ]
+          }
         ]
       }
     });
@@ -1140,6 +1187,12 @@ async function processCapInvestor(browser, investorName, invoiceDate, logoBase64
       const fundDate = new Date(record.fundDate);
       const fundYear = fundDate.getUTCFullYear();
       const fundMonth = fundDate.getUTCMonth();
+
+      // Exclude future-dated loans (fund date after the invoice date)
+      if (fundDate > invoiceDate) {
+        console.log(`  → Excluding ${record.propertyAddress}: future fund date ${fundMonth + 1}/${fundYear}`);
+        return false;
+      }
 
       // Exclude if fund date is in the same month+year as invoice date
       const shouldExclude = (fundYear === invoiceYear && fundMonth === invoiceMonth);
