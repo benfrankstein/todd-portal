@@ -283,7 +283,7 @@ exports.createClientUser = async (req, res) => {
 exports.getAllUsers = async (req, res) => {
   try {
     const users = await db.User.findAll({
-      attributes: ['id', 'email', 'firstName', 'lastName', 'role', 'businessName', 'isActive', 'createdAt', 'lastLogin'],
+      attributes: ['id', 'email', 'firstName', 'lastName', 'role', 'businessName', 'isActive', 'createdAt', 'lastLogin', 'lastSyncTimestamp'],
       order: [['createdAt', 'DESC']]
     });
 

@@ -55,14 +55,6 @@ exports.syncAllSheets = async (req, res) => {
       });
     }
 
-    // Check if service account key is configured
-    if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
-      return res.status(500).json({
-        success: false,
-        error: 'GOOGLE_SERVICE_ACCOUNT_KEY not configured. Please set the environment variable on Render.'
-      });
-    }
-
     console.log('Starting sync of all sheets...');
 
     // Initialize Google Sheets API
@@ -101,6 +93,14 @@ exports.syncAllSheets = async (req, res) => {
     );
 
     console.log('All sheets synced successfully');
+
+    // Update admin user's last sync timestamp
+    if (req.user && req.user.role === 'admin') {
+      await db.User.update(
+        { lastSyncTimestamp: new Date() },
+        { where: { id: req.user.id } }
+      );
+    }
 
     res.json({
       success: true,

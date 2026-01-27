@@ -77,6 +77,11 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DATE,
       allowNull: true,
       field: 'reset_password_expires'
+    },
+    lastSyncTimestamp: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: 'last_sync_timestamp'
     }
   }, {
     tableName: 'users',

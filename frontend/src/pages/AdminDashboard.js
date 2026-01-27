@@ -61,7 +61,8 @@ function AdminDashboard() {
       setBusinesses(businessData.businesses || []);
       setInvestors(investorData.investors || []);
       setCapInvestors(capInvestorData.capInvestors || []);
-      setUsers(usersData.users || []);
+      const allUsers = usersData.users || [];
+      setUsers(allUsers);
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {
@@ -268,6 +269,10 @@ function AdminDashboard() {
 
   const currentTabData = getCurrentTabData();
 
+  // Get current admin user's last sync timestamp
+  const currentAdminUser = users.find(u => u.email === user.email && u.role === 'admin');
+  const lastSyncTimestamp = currentAdminUser?.lastSyncTimestamp;
+
   if (loading) {
     return <div className="dashboard-container">Loading...</div>;
   }
@@ -302,7 +307,20 @@ function AdminDashboard() {
           <h1>Admin Dashboard</h1>
           <p>Welcome, {user.firstName}!</p>
         </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {lastSyncTimestamp && (
+            <span style={{ fontSize: '0.9rem', color: '#64748b', marginRight: '5px' }}>
+              Last sync: {new Date(lastSyncTimestamp).toLocaleDateString('en-US', {
+                month: 'numeric',
+                day: 'numeric',
+                year: 'numeric'
+              })} at {new Date(lastSyncTimestamp).toLocaleTimeString('en-US', {
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true
+              })}
+            </span>
+          )}
           <button
             onClick={handleSyncData}
             className="sync-button"
