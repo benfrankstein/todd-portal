@@ -614,8 +614,9 @@ async function processBusiness(browser, businessName, invoiceDate, logoBase64) {
       where: { businessName: businessName }
     });
 
-    // Filter out loans where closingDate is in the same month+year as invoice date
-    // These loans should appear in NEXT month's invoice, not this one
+    // Filter out loans based on closing date
+    // Rule: Skip the closing month AND the following month
+    // Example: Closes in January → Skip Jan & Feb → First invoice March 1st
     // Use UTC to ensure consistent timezone handling
     const records = allRecords.filter(record => {
       if (!record.closingDate) return true; // Include if no closing date
@@ -624,11 +625,20 @@ async function processBusiness(browser, businessName, invoiceDate, logoBase64) {
       const closingYear = closingDate.getUTCFullYear();
       const closingMonth = closingDate.getUTCMonth();
 
-      // Exclude if closing date is in the same month+year as invoice date
-      const shouldExclude = (closingYear === invoiceYear && closingMonth === invoiceMonth);
+      // Calculate the previous month (handle year boundary)
+      const prevMonth = invoiceMonth === 0 ? 11 : invoiceMonth - 1;
+      const prevMonthYear = invoiceMonth === 0 ? invoiceYear - 1 : invoiceYear;
+
+      // Exclude if closing date is in the same month as invoice date
+      const closedInInvoiceMonth = (closingYear === invoiceYear && closingMonth === invoiceMonth);
+
+      // Exclude if closing date is in the month before invoice date
+      const closedInPrevMonth = (closingYear === prevMonthYear && closingMonth === prevMonth);
+
+      const shouldExclude = closedInInvoiceMonth || closedInPrevMonth;
 
       if (shouldExclude) {
-        console.log(`  → Excluding ${record.projectAddress}: closed in ${closingMonth + 1}/${closingYear}, will appear in next month's invoice`);
+        console.log(`  → Excluding ${record.projectAddress}: closed in ${closingMonth + 1}/${closingYear}, skipping first 2 months`);
       }
 
       return !shouldExclude;
