@@ -61,7 +61,7 @@ exports.getMyInvoices = async (req, res) => {
 
     res.json({
       success: true,
-      businessName,
+      businessNames: allBusinessNames,
       count: invoicesWithSignedUrls.length,
       invoices: invoicesWithSignedUrls
     });
