@@ -201,17 +201,24 @@ async function getUserEmails(businessName, role) {
 
     const userRoles = roleMap[role] || [role];
 
-    // Find ALL users with matching business name and role
+    // Find ALL users where primary business_name matches OR additional_business_names contains the business
     const users = await db.User.findAll({
       where: {
-        businessName: businessName,
+        [db.Sequelize.Op.or]: [
+          { businessName: businessName }, // Primary business name matches
+          {
+            additionalBusinessNames: {
+              [db.Sequelize.Op.overlap]: [businessName] // Additional business names contains this business
+            }
+          }
+        ],
         role: {
           [db.Sequelize.Op.in]: userRoles
         },
         isActive: true,
         email: { [db.Sequelize.Op.ne]: null } // Only users with emails
       },
-      attributes: ['email', 'firstName', 'lastName', 'businessName', 'role']
+      attributes: ['email', 'firstName', 'lastName', 'businessName', 'additionalBusinessNames', 'role']
     });
 
     // Return full user objects

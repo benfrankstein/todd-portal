@@ -24,5 +24,6 @@ router.get('/capinvestor-names', authenticateToken, requireAdmin, authController
 router.post('/create-capinvestor', authenticateToken, requireAdmin, authController.createCapInvestorUser);
 router.get('/users', authenticateToken, requireAdmin, authController.getAllUsers);
 router.delete('/users/:id', authenticateToken, requireAdmin, authController.deleteUser);
+router.patch('/users/:id/business-names', authenticateToken, requireAdmin, authController.updateUserBusinessNames);
 
 module.exports = router;

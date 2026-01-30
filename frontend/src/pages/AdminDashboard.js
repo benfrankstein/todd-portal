@@ -38,6 +38,11 @@ function AdminDashboard() {
   // Delete user state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [userToDelete, setUserToDelete] = useState(null);
+
+  // Edit user businesses state
+  const [editingUser, setEditingUser] = useState(null);
+  const [businessSearchTerm, setBusinessSearchTerm] = useState('');
+  const [savingBusinesses, setSavingBusinesses] = useState(false);
   const [notification, setNotification] = useState({ show: false, type: '', message: '' });
 
   useEffect(() => {
@@ -246,6 +251,77 @@ function AdminDashboard() {
     setShowDeleteConfirm(false);
     setUserToDelete(null);
   };
+
+  // Handle adding additional business to user
+  const handleAddBusinessToUser = (businessName) => {
+    if (!editingUser) return;
+
+    const currentAdditional = editingUser.additionalBusinessNames || [];
+
+    // Don't add if it's already the primary business or in additional
+    if (editingUser.businessName === businessName || currentAdditional.includes(businessName)) {
+      showNotification('error', 'Business already associated with this user');
+      return;
+    }
+
+    const updatedAdditional = [...currentAdditional, businessName];
+    setEditingUser({
+      ...editingUser,
+      additionalBusinessNames: updatedAdditional
+    });
+    setBusinessSearchTerm('');
+  };
+
+  // Handle removing additional business from user
+  const handleRemoveBusinessFromUser = (businessName) => {
+    if (!editingUser) return;
+
+    const currentAdditional = editingUser.additionalBusinessNames || [];
+    const updatedAdditional = currentAdditional.filter(b => b !== businessName);
+
+    setEditingUser({
+      ...editingUser,
+      additionalBusinessNames: updatedAdditional
+    });
+  };
+
+  // Save updated business names
+  const handleSaveBusinessNames = async () => {
+    if (!editingUser) return;
+
+    try {
+      setSavingBusinesses(true);
+      await authAPI.updateUserBusinessNames(editingUser.id, editingUser.additionalBusinessNames || []);
+      await loadData(); // Reload users
+      setEditingUser(null);
+      setBusinessSearchTerm('');
+      showNotification('success', 'Business associations updated successfully');
+    } catch (error) {
+      console.error('Error updating business names:', error);
+      showNotification('error', error.response?.data?.error || 'Failed to update business names');
+    } finally {
+      setSavingBusinesses(false);
+    }
+  };
+
+  // Get available businesses for the user based on their role
+  const getAvailableBusinesses = () => {
+    if (!editingUser) return [];
+
+    if (editingUser.role === 'client' || editingUser.role === 'borrower') {
+      return businesses.map(b => b.businessName);
+    } else if (editingUser.role === 'promissory') {
+      return investors.map(i => i.investorName);
+    } else if (editingUser.role === 'capinvestor') {
+      return capInvestors.map(c => c.investorName);
+    }
+    return [];
+  };
+
+  // Filter available businesses by search term
+  const filteredAvailableBusinesses = getAvailableBusinesses().filter(name =>
+    name.toLowerCase().includes(businessSearchTerm.toLowerCase())
+  );
 
   // Get current tab data and filter based on search term
   const getCurrentTabData = () => {
@@ -462,33 +538,51 @@ function AdminDashboard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {users.map(u => (
-                        <tr key={u.id}>
-                          <td>{u.firstName} {u.lastName}</td>
-                          <td>{u.email}</td>
-                          <td>{u.businessName || '-'}</td>
-                          <td>
-                            <span className={`role-badge role-${u.role}`}>
-                              {u.role}
-                            </span>
-                          </td>
-                          <td>
-                            <span className={`status-badge ${u.isActive ? 'active' : 'inactive'}`}>
-                              {u.isActive ? 'Active' : 'Inactive'}
-                            </span>
-                          </td>
-                          <td>{u.lastLogin ? new Date(u.lastLogin).toLocaleDateString() : 'Never'}</td>
-                          <td>
-                            <button
-                              onClick={() => handleDeleteUserClick(u.id, `${u.firstName} ${u.lastName}`)}
-                              className="delete-user-button"
-                              title="Delete user"
-                            >
-                              🗑️
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {users.map(u => {
+                        // Combine primary and additional business names
+                        const allBusinessNames = [];
+                        if (u.businessName) allBusinessNames.push(u.businessName);
+                        if (u.additionalBusinessNames && u.additionalBusinessNames.length > 0) {
+                          allBusinessNames.push(...u.additionalBusinessNames);
+                        }
+                        const businessDisplay = allBusinessNames.length > 0 ? allBusinessNames.join(', ') : '-';
+
+                        return (
+                          <tr key={u.id}>
+                            <td>{u.firstName} {u.lastName}</td>
+                            <td>{u.email}</td>
+                            <td>{businessDisplay}</td>
+                            <td>
+                              <span className={`role-badge role-${u.role}`}>
+                                {u.role}
+                              </span>
+                            </td>
+                            <td>
+                              <span className={`status-badge ${u.isActive ? 'active' : 'inactive'}`}>
+                                {u.isActive ? 'Active' : 'Inactive'}
+                              </span>
+                            </td>
+                            <td>{u.lastLogin ? new Date(u.lastLogin).toLocaleDateString() : 'Never'}</td>
+                            <td>
+                              <button
+                                onClick={() => setEditingUser(u)}
+                                className="edit-user-button"
+                                title="Manage businesses"
+                                style={{marginRight: '8px'}}
+                              >
+                                ✏️
+                              </button>
+                              <button
+                                onClick={() => handleDeleteUserClick(u.id, `${u.firstName} ${u.lastName}`)}
+                                className="delete-user-button"
+                                title="Delete user"
+                              >
+                                🗑️
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -708,6 +802,106 @@ function AdminDashboard() {
               </button>
               <button onClick={confirmDeleteUser} className="button-danger">
                 Delete User
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit User Business Names Modal */}
+      {editingUser && (
+        <div className="modal-overlay" onClick={() => setEditingUser(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{maxWidth: '600px'}}>
+            <div className="modal-header">
+              <h2>Manage Business Access for {editingUser.firstName} {editingUser.lastName}</h2>
+              <button onClick={() => setEditingUser(null)} className="modal-close">&times;</button>
+            </div>
+            <div className="modal-body" style={{ padding: '24px' }}>
+              {/* Primary Business */}
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#475569', marginBottom: '8px' }}>
+                  Primary Business
+                </label>
+                <div style={{ padding: '12px', backgroundColor: '#f1f5f9', borderRadius: '8px', fontSize: '14px', color: '#1e293b' }}>
+                  {editingUser.businessName || 'No primary business'}
+                </div>
+              </div>
+
+              {/* Additional Businesses */}
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#475569', marginBottom: '8px' }}>
+                  Additional Businesses
+                </label>
+                {editingUser.additionalBusinessNames && editingUser.additionalBusinessNames.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {editingUser.additionalBusinessNames.map((name, idx) => (
+                      <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+                        <span style={{ fontSize: '14px', color: '#1e293b' }}>{name}</span>
+                        <button
+                          onClick={() => handleRemoveBusinessFromUser(name)}
+                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '18px', padding: '4px 8px' }}
+                          title="Remove"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ padding: '12px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '14px', color: '#64748b', textAlign: 'center' }}>
+                    No additional businesses
+                  </div>
+                )}
+              </div>
+
+              {/* Search and Add Business */}
+              <div>
+                <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#475569', marginBottom: '8px' }}>
+                  Add Business
+                </label>
+                <input
+                  type="text"
+                  placeholder="Search businesses..."
+                  value={businessSearchTerm}
+                  onChange={(e) => setBusinessSearchTerm(e.target.value)}
+                  style={{ width: '100%', padding: '12px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px', marginBottom: '8px' }}
+                />
+                {businessSearchTerm && filteredAvailableBusinesses.length > 0 && (
+                  <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: '#ffffff' }}>
+                    {filteredAvailableBusinesses.slice(0, 10).map((name, idx) => {
+                      const isAlreadyAssociated = editingUser.businessName === name ||
+                        (editingUser.additionalBusinessNames && editingUser.additionalBusinessNames.includes(name));
+
+                      return (
+                        <div
+                          key={idx}
+                          onClick={() => !isAlreadyAssociated && handleAddBusinessToUser(name)}
+                          style={{
+                            padding: '12px',
+                            cursor: isAlreadyAssociated ? 'not-allowed' : 'pointer',
+                            borderBottom: idx < filteredAvailableBusinesses.slice(0, 10).length - 1 ? '1px solid #f1f5f9' : 'none',
+                            backgroundColor: isAlreadyAssociated ? '#f8fafc' : '#ffffff',
+                            color: isAlreadyAssociated ? '#94a3b8' : '#1e293b',
+                            fontSize: '14px',
+                            transition: 'background-color 0.2s'
+                          }}
+                          onMouseEnter={(e) => !isAlreadyAssociated && (e.target.style.backgroundColor = '#f8fafc')}
+                          onMouseLeave={(e) => !isAlreadyAssociated && (e.target.style.backgroundColor = '#ffffff')}
+                        >
+                          {name} {isAlreadyAssociated && '(Already associated)'}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="modal-actions" style={{ padding: '0 24px 24px 24px' }}>
+              <button onClick={() => setEditingUser(null)} className="button-secondary" disabled={savingBusinesses}>
+                Cancel
+              </button>
+              <button onClick={handleSaveBusinessNames} className="button-primary" disabled={savingBusinesses}>
+                {savingBusinesses ? 'Saving...' : 'Save Changes'}
               </button>
             </div>
           </div>

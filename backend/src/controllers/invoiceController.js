@@ -17,9 +17,12 @@ const S3_BUCKET = process.env.S3_BUCKET_NAME || 'coastal-lending-invoices';
  */
 exports.getMyInvoices = async (req, res) => {
   try {
-    const { businessName, role } = req.user;
+    const { role } = req.user;
 
-    if (!businessName) {
+    // Get all business names (primary + additional)
+    const allBusinessNames = req.user.getAllBusinessNames();
+
+    if (allBusinessNames.length === 0) {
       return res.status(400).json({ error: 'No business name associated with your account' });
     }
 
@@ -31,10 +34,12 @@ exports.getMyInvoices = async (req, res) => {
       queryRole = 'capinvestor';
     }
 
-    // Get all invoices for this user
+    // Get all invoices for ANY of this user's business names
     const invoices = await db.Invoice.findAll({
       where: {
-        businessName: businessName,
+        businessName: {
+          [db.Sequelize.Op.in]: allBusinessNames
+        },
         role: queryRole
       },
       order: [['invoiceDate', 'DESC']]

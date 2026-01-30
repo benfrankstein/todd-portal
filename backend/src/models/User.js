@@ -42,6 +42,17 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       field: 'business_name'
     },
+    additionalBusinessNames: {
+      type: DataTypes.ARRAY(DataTypes.TEXT),
+      allowNull: true,
+      defaultValue: [],
+      field: 'additional_business_names',
+      get() {
+        const value = this.getDataValue('additionalBusinessNames');
+        // Always return an array, even if null
+        return value || [];
+      }
+    },
     isActive: {
       type: DataTypes.BOOLEAN,
       defaultValue: true,
@@ -105,6 +116,18 @@ module.exports = (sequelize, DataTypes) => {
 
   User.prototype.validatePassword = async function(password) {
     return await bcrypt.compare(password, this.password);
+  };
+
+  // Helper method to get all business names (primary + additional)
+  User.prototype.getAllBusinessNames = function() {
+    const names = [];
+    if (this.businessName) {
+      names.push(this.businessName);
+    }
+    if (this.additionalBusinessNames && this.additionalBusinessNames.length > 0) {
+      names.push(...this.additionalBusinessNames);
+    }
+    return names;
   };
 
   return User;

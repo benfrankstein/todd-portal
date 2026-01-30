@@ -6,16 +6,19 @@ const db = require('../models');
  */
 exports.getMyRecords = async (req, res) => {
   try {
-    const { businessName } = req.user;
+    // Get all business names (primary + additional)
+    const allBusinessNames = req.user.getAllBusinessNames();
 
-    if (!businessName) {
+    if (allBusinessNames.length === 0) {
       return res.status(400).json({ error: 'No investor name associated with this account' });
     }
 
-    // Get all cap investor records for this investor
+    // Get all cap investor records for ANY of this user's investor names
     const records = await db.CapInvestor.findAll({
       where: {
-        investorName: businessName
+        investorName: {
+          [db.Sequelize.Op.in]: allBusinessNames
+        }
       },
       order: [['propertyAddress', 'ASC']]
     });
@@ -23,7 +26,7 @@ exports.getMyRecords = async (req, res) => {
     res.json({
       success: true,
       records,
-      investorName: businessName
+      investorNames: allBusinessNames
     });
 
   } catch (error) {

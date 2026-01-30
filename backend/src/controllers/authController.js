@@ -337,6 +337,52 @@ exports.deleteUser = async (req, res) => {
 };
 
 /**
+ * Update user's additional business names (admin only)
+ * PATCH /api/auth/users/:id/business-names
+ */
+exports.updateUserBusinessNames = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { additionalBusinessNames } = req.body;
+
+    // Validate input
+    if (!Array.isArray(additionalBusinessNames)) {
+      return res.status(400).json({
+        error: 'additionalBusinessNames must be an array'
+      });
+    }
+
+    // Find user
+    const user = await db.User.findByPk(id);
+
+    if (!user) {
+      return res.status(404).json({
+        error: 'User not found'
+      });
+    }
+
+    // Update additional business names
+    user.additionalBusinessNames = additionalBusinessNames;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Business names updated successfully',
+      user: {
+        id: user.id,
+        email: user.email,
+        businessName: user.businessName,
+        additionalBusinessNames: user.additionalBusinessNames
+      }
+    });
+
+  } catch (error) {
+    console.error('Update user business names error:', error);
+    res.status(500).json({ error: 'Failed to update business names' });
+  }
+};
+
+/**
  * Get investor names from promissory table
  * GET /api/auth/investor-names
  */

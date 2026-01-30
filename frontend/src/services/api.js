@@ -100,6 +100,11 @@ export const authAPI = {
     return response.data;
   },
 
+  updateUserBusinessNames: async (userId, additionalBusinessNames) => {
+    const response = await api.patch(`/auth/users/${userId}/business-names`, { additionalBusinessNames });
+    return response.data;
+  },
+
   sendVerificationCode: async (phoneNumber) => {
     const response = await api.post('/auth/send-verification-code', { phoneNumber });
     return response.data;

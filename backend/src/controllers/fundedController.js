@@ -6,20 +6,26 @@ const db = require('../models');
  */
 exports.getMyFundedRecords = async (req, res) => {
   try {
-    const { businessName } = req.user;
+    // Get all business names (primary + additional)
+    const allBusinessNames = req.user.getAllBusinessNames();
 
-    if (!businessName) {
+    if (allBusinessNames.length === 0) {
       return res.status(400).json({ error: 'No business name associated with your account' });
     }
 
+    // Query for records matching ANY of the user's business names
     const records = await db.Funded.findAll({
-      where: { businessName },
+      where: {
+        businessName: {
+          [db.Sequelize.Op.in]: allBusinessNames
+        }
+      },
       order: [['createdAt', 'DESC']]
     });
 
     res.json({
       success: true,
-      businessName,
+      businessNames: allBusinessNames,
       count: records.length,
       records
     });
