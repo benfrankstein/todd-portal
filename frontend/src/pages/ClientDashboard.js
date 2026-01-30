@@ -831,8 +831,16 @@ function ClientDashboard() {
               <div className="account-section">
                 <h3 className="section-subtitle">Business Information</h3>
                 <div className="detail-row">
-                  <span className="detail-label">Business Name</span>
-                  <span className="detail-value">{businessName || 'N/A'}</span>
+                  <span className="detail-label">Business Name{(user.additionalBusinessNames && user.additionalBusinessNames.length > 0) ? 's' : ''}</span>
+                  <span className="detail-value">
+                    {user.businessName || 'N/A'}
+                    {user.additionalBusinessNames && user.additionalBusinessNames.length > 0 && (
+                      <>
+                        <br />
+                        {user.additionalBusinessNames.join(', ')}
+                      </>
+                    )}
+                  </span>
                 </div>
                 <div className="detail-row">
                   <span className="detail-label">Role</span>
