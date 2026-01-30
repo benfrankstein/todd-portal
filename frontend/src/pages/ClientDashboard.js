@@ -482,7 +482,7 @@ function ClientDashboard() {
         <section className="dashboard-section" style={{ display: activeTab === 'invoice' ? 'block' : 'none' }}>
           {/* Business Filter Tabs - Only show if user has multiple businesses */}
           {getUniqueBusinessNamesFromInvoices().length > 1 && (
-            <div style={{ marginBottom: '24px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <div style={{ marginBottom: '24px', display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
               {getUniqueBusinessNamesFromInvoices().map(businessName => (
                 <button
                   key={businessName}
@@ -554,7 +554,7 @@ function ClientDashboard() {
 
             {/* Business Filter Tabs - Only show if user has multiple businesses */}
             {getUniqueBusinessNamesFromInvoices().length > 1 && (
-              <div style={{ marginBottom: '24px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <div style={{ marginBottom: '24px', display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
                 {getUniqueBusinessNamesFromInvoices().map(businessName => (
                   <button
                     key={businessName}
