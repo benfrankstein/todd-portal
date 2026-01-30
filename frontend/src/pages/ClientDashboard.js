@@ -18,6 +18,7 @@ function ClientDashboard() {
   const [invoices, setInvoices] = useState([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [pdfLoaded, setPdfLoaded] = useState(false);
+  const [selectedBusinessForInvoice, setSelectedBusinessForInvoice] = useState(null); // For filtering invoices by business
 
   useEffect(() => {
     loadRecords();
@@ -133,6 +134,36 @@ function ClientDashboard() {
     // Open the pre-signed URL in a new tab to download
     window.open(downloadUrl, '_blank');
   };
+
+  // Get unique business names from invoices
+  const getUniqueBusinessNamesFromInvoices = () => {
+    const uniqueNames = [...new Set(invoices.map(inv => inv.businessName).filter(Boolean))];
+    return uniqueNames.sort();
+  };
+
+  // Get filtered invoices based on selected business
+  const getFilteredInvoices = () => {
+    if (!selectedBusinessForInvoice) {
+      return invoices;
+    }
+    return invoices.filter(inv => inv.businessName === selectedBusinessForInvoice);
+  };
+
+  // Get the most recent invoice for the selected business (for "Invoice Statement" tab)
+  const getCurrentInvoice = () => {
+    const filtered = getFilteredInvoices();
+    return filtered.length > 0 ? filtered[0] : null;
+  };
+
+  // Initialize business filter when invoices load
+  useEffect(() => {
+    if (invoices.length > 0 && !selectedBusinessForInvoice) {
+      const businessNames = getUniqueBusinessNamesFromInvoices();
+      if (businessNames.length > 0) {
+        setSelectedBusinessForInvoice(businessNames[0]); // Default to first business
+      }
+    }
+  }, [invoices]);
 
   // Calculate portfolio metrics
   const getPortfolioMetrics = () => {
@@ -449,11 +480,51 @@ function ClientDashboard() {
 
         {/* Invoice Statement Tab */}
         <section className="dashboard-section" style={{ display: activeTab === 'invoice' ? 'block' : 'none' }}>
+          {/* Business Filter Tabs - Only show if user has multiple businesses */}
+          {getUniqueBusinessNamesFromInvoices().length > 1 && (
+            <div style={{ marginBottom: '24px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {getUniqueBusinessNamesFromInvoices().map(businessName => (
+                <button
+                  key={businessName}
+                  onClick={() => {
+                    setSelectedBusinessForInvoice(businessName);
+                    setPdfLoaded(false); // Reset PDF loading state when switching businesses
+                  }}
+                  style={{
+                    padding: '10px 20px',
+                    background: selectedBusinessForInvoice === businessName
+                      ? 'linear-gradient(135deg, #1e40af 0%, #3b82f6 100%)'
+                      : 'white',
+                    color: selectedBusinessForInvoice === businessName ? 'white' : '#475569',
+                    border: selectedBusinessForInvoice === businessName ? 'none' : '2px solid #e2e8f0',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontWeight: '600',
+                    fontSize: '14px',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (selectedBusinessForInvoice !== businessName) {
+                      e.target.style.borderColor = '#cbd5e1';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (selectedBusinessForInvoice !== businessName) {
+                      e.target.style.borderColor = '#e2e8f0';
+                    }
+                  }}
+                >
+                  {businessName}
+                </button>
+              ))}
+            </div>
+          )}
+
           {loadingInvoices ? (
             <div className="loading-container">
               <p>Loading invoice...</p>
             </div>
-          ) : invoices.length === 0 ? (
+          ) : getCurrentInvoice() === null ? (
             <div className="empty-state invoice-coming-soon">
               <div className="coming-soon-icon">📄</div>
               <h3>New Invoice Statement Coming Soon</h3>
@@ -467,7 +538,7 @@ function ClientDashboard() {
                 </div>
               )}
               <iframe
-                src={`${invoices[0].downloadUrl}#toolbar=0&navpanes=0&view=FitH`}
+                src={`${getCurrentInvoice().downloadUrl}#toolbar=0&navpanes=0&view=FitH`}
                 title="Invoice Statement"
                 className="pdf-iframe"
                 onLoad={() => setPdfLoaded(true)}
@@ -481,13 +552,50 @@ function ClientDashboard() {
         <section className="dashboard-section" style={{ display: activeTab === 'statements' ? 'block' : 'none' }}>
             <h2 className="section-title">Past Invoice Statements</h2>
 
+            {/* Business Filter Tabs - Only show if user has multiple businesses */}
+            {getUniqueBusinessNamesFromInvoices().length > 1 && (
+              <div style={{ marginBottom: '24px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {getUniqueBusinessNamesFromInvoices().map(businessName => (
+                  <button
+                    key={businessName}
+                    onClick={() => setSelectedBusinessForInvoice(businessName)}
+                    style={{
+                      padding: '10px 20px',
+                      background: selectedBusinessForInvoice === businessName
+                        ? 'linear-gradient(135deg, #1e40af 0%, #3b82f6 100%)'
+                        : 'white',
+                      color: selectedBusinessForInvoice === businessName ? 'white' : '#475569',
+                      border: selectedBusinessForInvoice === businessName ? 'none' : '2px solid #e2e8f0',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontWeight: '600',
+                      fontSize: '14px',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (selectedBusinessForInvoice !== businessName) {
+                        e.target.style.borderColor = '#cbd5e1';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (selectedBusinessForInvoice !== businessName) {
+                        e.target.style.borderColor = '#e2e8f0';
+                      }
+                    }}
+                  >
+                    {businessName}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {loadingInvoices ? (
               <div className="loading-container">
                 <p>Loading invoices...</p>
               </div>
-            ) : invoices.length === 0 ? (
+            ) : getFilteredInvoices().length === 0 ? (
               <div className="empty-state">
-                <p>No past invoices found.</p>
+                <p>No past invoices found{selectedBusinessForInvoice ? ` for ${selectedBusinessForInvoice}` : ''}.</p>
               </div>
             ) : (
               <div className="invoices-list">
@@ -502,7 +610,7 @@ function ClientDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {invoices.map((invoice) => (
+                    {getFilteredInvoices().map((invoice) => (
                       <tr key={invoice.id}>
                         <td>{formatDate(invoice.invoiceDate)}</td>
                         <td>{invoice.fileName}</td>

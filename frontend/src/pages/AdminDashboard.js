@@ -43,6 +43,7 @@ function AdminDashboard() {
   const [editingUser, setEditingUser] = useState(null);
   const [businessSearchTerm, setBusinessSearchTerm] = useState('');
   const [savingBusinesses, setSavingBusinesses] = useState(false);
+  const [showBusinessDropdown, setShowBusinessDropdown] = useState(false);
   const [notification, setNotification] = useState({ show: false, type: '', message: '' });
 
   useEffect(() => {
@@ -285,6 +286,13 @@ function AdminDashboard() {
     });
   };
 
+  // Close edit modal
+  const closeEditModal = () => {
+    setEditingUser(null);
+    setBusinessSearchTerm('');
+    setShowBusinessDropdown(false);
+  };
+
   // Save updated business names
   const handleSaveBusinessNames = async () => {
     if (!editingUser) return;
@@ -293,8 +301,7 @@ function AdminDashboard() {
       setSavingBusinesses(true);
       await authAPI.updateUserBusinessNames(editingUser.id, editingUser.additionalBusinessNames || []);
       await loadData(); // Reload users
-      setEditingUser(null);
-      setBusinessSearchTerm('');
+      closeEditModal();
       showNotification('success', 'Business associations updated successfully');
     } catch (error) {
       console.error('Error updating business names:', error);
@@ -565,19 +572,22 @@ function AdminDashboard() {
                             <td>{u.lastLogin ? new Date(u.lastLogin).toLocaleDateString() : 'Never'}</td>
                             <td>
                               <button
-                                onClick={() => setEditingUser(u)}
+                                onClick={() => {
+                                  setEditingUser(u);
+                                  setBusinessSearchTerm('');
+                                  setShowBusinessDropdown(false);
+                                }}
                                 className="edit-user-button"
                                 title="Manage businesses"
-                                style={{marginRight: '8px'}}
                               >
-                                ✏️
+                                Edit
                               </button>
                               <button
                                 onClick={() => handleDeleteUserClick(u.id, `${u.firstName} ${u.lastName}`)}
                                 className="delete-user-button"
                                 title="Delete user"
                               >
-                                🗑️
+                                Delete
                               </button>
                             </td>
                           </tr>
@@ -810,13 +820,13 @@ function AdminDashboard() {
 
       {/* Edit User Business Names Modal */}
       {editingUser && (
-        <div className="modal-overlay" onClick={() => setEditingUser(null)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{maxWidth: '600px'}}>
+        <div className="modal-overlay" onClick={closeEditModal}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{maxWidth: '600px', overflow: 'visible'}}>
             <div className="modal-header">
               <h2>Manage Business Access for {editingUser.firstName} {editingUser.lastName}</h2>
-              <button onClick={() => setEditingUser(null)} className="modal-close">&times;</button>
+              <button onClick={closeEditModal} className="modal-close">&times;</button>
             </div>
-            <div className="modal-body" style={{ padding: '24px' }}>
+            <div className="modal-body" style={{ padding: '24px', overflow: 'visible' }}>
               {/* Primary Business */}
               <div style={{ marginBottom: '24px' }}>
                 <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#475569', marginBottom: '8px' }}>
@@ -855,7 +865,7 @@ function AdminDashboard() {
               </div>
 
               {/* Search and Add Business */}
-              <div>
+              <div style={{ position: 'relative' }}>
                 <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#475569', marginBottom: '8px' }}>
                   Add Business
                 </label>
@@ -864,22 +874,29 @@ function AdminDashboard() {
                   placeholder="Search businesses..."
                   value={businessSearchTerm}
                   onChange={(e) => setBusinessSearchTerm(e.target.value)}
+                  onFocus={() => setShowBusinessDropdown(true)}
+                  onBlur={() => setTimeout(() => setShowBusinessDropdown(false), 200)}
                   style={{ width: '100%', padding: '12px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px', marginBottom: '8px' }}
                 />
-                {businessSearchTerm && filteredAvailableBusinesses.length > 0 && (
-                  <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: '#ffffff' }}>
-                    {filteredAvailableBusinesses.slice(0, 10).map((name, idx) => {
+                {showBusinessDropdown && filteredAvailableBusinesses.length > 0 && (
+                  <div style={{ maxHeight: '400px', overflowY: 'auto', border: '2px solid #3b82f6', borderRadius: '8px', backgroundColor: '#ffffff', position: 'absolute', width: '100%', zIndex: 2000, marginTop: '-8px', boxShadow: '0 10px 40px rgba(0, 0, 0, 0.15)' }}>
+                    {filteredAvailableBusinesses.map((name, idx) => {
                       const isAlreadyAssociated = editingUser.businessName === name ||
                         (editingUser.additionalBusinessNames && editingUser.additionalBusinessNames.includes(name));
 
                       return (
                         <div
                           key={idx}
-                          onClick={() => !isAlreadyAssociated && handleAddBusinessToUser(name)}
+                          onClick={() => {
+                            if (!isAlreadyAssociated) {
+                              handleAddBusinessToUser(name);
+                              setBusinessSearchTerm('');
+                            }
+                          }}
                           style={{
                             padding: '12px',
                             cursor: isAlreadyAssociated ? 'not-allowed' : 'pointer',
-                            borderBottom: idx < filteredAvailableBusinesses.slice(0, 10).length - 1 ? '1px solid #f1f5f9' : 'none',
+                            borderBottom: idx < filteredAvailableBusinesses.length - 1 ? '1px solid #f1f5f9' : 'none',
                             backgroundColor: isAlreadyAssociated ? '#f8fafc' : '#ffffff',
                             color: isAlreadyAssociated ? '#94a3b8' : '#1e293b',
                             fontSize: '14px',
@@ -897,7 +914,7 @@ function AdminDashboard() {
               </div>
             </div>
             <div className="modal-actions" style={{ padding: '0 24px 24px 24px' }}>
-              <button onClick={() => setEditingUser(null)} className="button-secondary" disabled={savingBusinesses}>
+              <button onClick={closeEditModal} className="button-secondary" disabled={savingBusinesses}>
                 Cancel
               </button>
               <button onClick={handleSaveBusinessNames} className="button-primary" disabled={savingBusinesses}>

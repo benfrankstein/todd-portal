@@ -513,13 +513,41 @@
   font-weight: 500;
 }
 
+/* Edit User Button */
+.edit-user-button {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: white;
+  border: none;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 8px 16px;
+  border-radius: 6px;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 8px;
+}
+
+.edit-user-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.edit-user-button:active {
+  transform: translateY(0);
+}
+
 /* Delete User Button */
 .delete-user-button {
-  background: transparent;
+  background: #ef4444;
+  color: white;
   border: none;
-  font-size: 20px;
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
-  padding: 8px;
+  padding: 8px 16px;
   border-radius: 6px;
   transition: all 0.2s;
   display: inline-flex;
@@ -528,12 +556,13 @@
 }
 
 .delete-user-button:hover {
-  background: #fee2e2;
-  transform: scale(1.1);
+  background: #dc2626;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
 }
 
 .delete-user-button:active {
-  transform: scale(0.95);
+  transform: translateY(0);
 }
 
 /* Notification Banner */
