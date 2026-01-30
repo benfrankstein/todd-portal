@@ -269,6 +269,15 @@ async function uploadToS3(pdfBuffer, s3Key) {
  * Generate HTML for invoice
  */
 function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase64) {
+  // Calculate the covered period (previous month)
+  const invoice = new Date(invoiceDate);
+  const invoiceMonth = invoice.getMonth();
+  const invoiceYear = invoice.getFullYear();
+  const coveredYear = invoiceMonth === 0 ? invoiceYear - 1 : invoiceYear;
+  const coveredMonth = invoiceMonth === 0 ? 11 : invoiceMonth - 1;
+  const periodStart = new Date(coveredYear, coveredMonth, 1);
+  const periodEnd = new Date(coveredYear, coveredMonth, getDaysInMonth(coveredYear, coveredMonth));
+
   // Calculate totals
   let totalInvested = 0;
   let monthlyInterest = 0;
@@ -278,12 +287,28 @@ function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase6
   if (role === 'client') {
     totalInterestDue = records.reduce((sum, r) => sum + (parseFloat(r.interestPayment) || 0), 0);
   } else if (role === 'investor') {
-    totalInvested = records.reduce((sum, r) => sum + (parseFloat(r.loanAmount) || 0), 0);
+    // Exclude loans with payoff date in the covered billing period from total invested
+    totalInvested = records.reduce((sum, r) => {
+      const payoffDate = r.payoffDate ? new Date(r.payoffDate) : null;
+      const isPaidOff = payoffDate && payoffDate >= periodStart && payoffDate <= periodEnd;
+      if (!isPaidOff) {
+        return sum + (parseFloat(r.loanAmount) || 0);
+      }
+      return sum;
+    }, 0);
     monthlyInterest = records.reduce((sum, r) => sum + (parseFloat(r.capitalPay) || 0), 0);
     // Sum up all year-to-date values from all loan records for this investor
     yearToDate = records.reduce((sum, r) => sum + (parseFloat(r.yearToDate) || 0), 0);
   } else if (role === 'capinvestor') {
-    totalInvested = records.reduce((sum, r) => sum + (parseFloat(r.loanAmount) || 0), 0);
+    // Exclude loans with payoff date in the covered billing period from total invested
+    totalInvested = records.reduce((sum, r) => {
+      const payoffDate = r.payoffDate ? new Date(r.payoffDate) : null;
+      const isPaidOff = payoffDate && payoffDate >= periodStart && payoffDate <= periodEnd;
+      if (!isPaidOff) {
+        return sum + (parseFloat(r.loanAmount) || 0);
+      }
+      return sum;
+    }, 0);
     monthlyInterest = records.reduce((sum, r) => sum + (parseFloat(r.payment) || 0), 0);
     // Year-to-date is already aggregated per investor, just take first record's value
     yearToDate = records.length > 0 ? (parseFloat(records[0].yearToDate) || 0) : 0;
@@ -308,6 +333,13 @@ function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase6
     year: 'numeric'
   });
 
+  // Format covered period for display
+  const coveredDate = new Date(coveredYear, coveredMonth, 1);
+  const formattedCoveredPeriod = coveredDate.toLocaleDateString('en-US', {
+    month: 'long',
+    year: 'numeric'
+  });
+
   // Generate table columns based on role
   let tableHeaders = '';
   let tableRows = (pageRecords) => '';
@@ -317,6 +349,7 @@ function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase6
       <th>Property Address</th>
       <th>Loan Amount</th>
       <th>Date Funded</th>
+      <th>Payoff Date</th>
       <th>Interest Rate</th>
       <th>Interest Earned</th>
     `;
@@ -325,10 +358,11 @@ function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase6
         <td>${record.propertyAddress || 'No Address'}</td>
         <td>${formatCurrency(record.loanAmount)}</td>
         <td>${formatDate(record.fundDate)}</td>
+        <td>${record.payoffDate ? formatDate(record.payoffDate) : '-'}</td>
         <td>${formatPercent(record.interestRate)}</td>
         <td>
           ${formatCurrency(record.payment)}
-          ${record.isProrated && record.daysInPeriod ? `<div class="proration-note">Prorated ${record.daysInPeriod} out of 30 days</div>` : ''}
+          ${record.isProrated && record.daysInPeriod ? `<div class="proration-note">Prorated ${record.daysInPeriod} days</div>` : ''}
         </td>
       </tr>
     `).join('');
@@ -346,7 +380,7 @@ function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase6
         <td>${formatPercent(record.interestRate)}</td>
         <td>
           ${formatCurrency(record.capitalPay)}
-          ${record.isProrated && record.daysInPeriod ? `<div class="proration-note">Prorated ${record.daysInPeriod} out of 30 days</div>` : ''}
+          ${record.isProrated && record.daysInPeriod ? `<div class="proration-note">Prorated ${record.daysInPeriod} days</div>` : ''}
         </td>
       </tr>
     `).join('');
@@ -364,7 +398,7 @@ function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase6
         <td>${formatPercent(record.interestRate)}</td>
         <td>
           ${formatCurrency(record.interestPayment)}
-          ${record.isProrated && record.daysInPeriod ? `<div class="proration-note">Prorated ${record.daysInPeriod} out of 30 days</div>` : ''}
+          ${record.isProrated && record.daysInPeriod ? `<div class="proration-note">Prorated ${record.daysInPeriod} days</div>` : ''}
         </td>
       </tr>
     `).join('');
@@ -378,7 +412,7 @@ function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase6
         <div class="invoice-header-premium">
           <div class="invoice-logo-container">
             ${logoBase64 ? `<img src="data:image/png;base64,${logoBase64}" alt="Coastal Private Lending" class="invoice-logo-image" />` : ''}
-            <div class="statement-title">Loan Invoice</div>
+            <div class="statement-title">${role === 'client' ? 'Interest Payment Statement' : 'Investor Statement'}</div>
           </div>
           <div class="invoice-date-box">
             <div class="date-label">Date</div>
@@ -435,7 +469,7 @@ function generateInvoiceHTML(businessName, role, records, invoiceDate, logoBase6
               <span class="total-label-premium">Total Due ${formattedDate}</span>
               <span class="total-value-premium">${formatCurrency(totalInterestDue)}</span>
             ` : `
-              <span class="total-label-premium">Total Interest Earned (${formattedDate})</span>
+              <span class="total-label-premium">Total Interest Earned (${formattedCoveredPeriod})</span>
               <span class="total-value-premium">${formatCurrency(monthlyInterest)}</span>
             `}
           </div>
