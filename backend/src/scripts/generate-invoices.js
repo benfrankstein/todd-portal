@@ -963,17 +963,18 @@ async function processInvestor(browser, investorName, invoiceDate, logoBase64) {
     for (const record of records) {
       const proration = determineProration(record, invoiceDate, 'fundDate', 'payoffDate');
 
+      // Use capital_pay value directly from Google Sheet (already calculated there)
       let finalAmount = parseFloat(record.capitalPay) || 0;
       let isProrated = false;
       let prorationType = null;
       let daysInPeriod = getDaysInMonth(coveredYear, coveredMonth);
       let totalDaysInMonth = daysInPeriod;
 
-      // Apply first month proration if applicable
+      // Check for first month proration (keep check but use capital_pay value directly)
       if (proration.isFirstMonth) {
         const prorationCalc = calculateFirstMonthProration(record.fundDate, finalAmount);
         if (prorationCalc) {
-          finalAmount = prorationCalc.proratedAmount;
+          // Use capital_pay value from sheet instead of calculating
           isProrated = true;
           prorationType = 'first_month';
           daysInPeriod = prorationCalc.daysInPeriod;
@@ -982,11 +983,11 @@ async function processInvestor(browser, investorName, invoiceDate, logoBase64) {
         }
       }
 
-      // Apply last month proration if applicable
+      // Check for last month proration (keep check but use capital_pay value directly)
       if (proration.isLastMonth) {
         const prorationCalc = calculateLastMonthProration(record.payoffDate, parseFloat(record.capitalPay) || 0);
         if (prorationCalc) {
-          finalAmount = prorationCalc.proratedAmount;
+          // Use capital_pay value from sheet instead of calculating
           isProrated = true;
           prorationType = 'last_month';
           daysInPeriod = prorationCalc.daysInPeriod;
