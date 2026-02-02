@@ -202,7 +202,7 @@ class GoogleSheetsService {
    * - Loan Amount: Column J (index 9)
    * - Payoff Date: Column K (index 10)
    * - Interest Rate: Column N (index 13)
-   * - Capital Pay: Column O (index 14)
+   * - Capital Pay: Column P (index 15)
    * - Year to Date: Column Q (index 16)
    *
    * Data starts at row 5
@@ -239,7 +239,7 @@ class GoogleSheetsService {
         loanAmount: this.parseNumber(row[9]),           // Column J (index 9)
         payoffDate: this.parseDate(row[10]),            // Column K (index 10)
         interestRate: this.parseNumber(row[13]),        // Column N (index 13)
-        capitalPay: this.parseNumber(row[14]),          // Column O (index 14)
+        capitalPay: this.parseNumber(row[15]),          // Column P (index 15)
         yearToDate: this.parseNumber(row[16])           // Column Q (index 16)
       };
 
