@@ -980,9 +980,29 @@ async function sendWelcomeEmail(recipientEmail, firstName, temporaryPassword) {
   }
 }
 
+/**
+ * Verify the Gmail OAuth credentials without sending anything.
+ * Refreshes the access token and reads the mailbox profile so a dead or
+ * misconfigured refresh token fails fast instead of failing once per invoice.
+ */
+async function verifyEmailCredentials() {
+  try {
+    const oauth2Client = createOAuth2Client();
+    await oauth2Client.getAccessToken();
+
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+    const profile = await gmail.users.getProfile({ userId: 'me' });
+
+    return { success: true, mailbox: profile.data.emailAddress };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
 module.exports = {
   sendInvoiceEmail,
   sendPasswordResetEmail,
   sendWelcomeEmail,
+  verifyEmailCredentials,
   testEmailConfiguration
 };

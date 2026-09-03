@@ -18,7 +18,7 @@ const chromium = require('@sparticuz/chromium');
 const AWS = require('aws-sdk');
 const db = require('../models');
 const fs = require('fs').promises;
-const { sendInvoiceEmail } = require('../services/emailService');
+const { sendInvoiceEmail, verifyEmailCredentials } = require('../services/emailService');
 
 // AWS S3 Configuration
 const s3 = new AWS.S3({
@@ -142,9 +142,13 @@ function determineProration(loan, invoiceDate, fundDateField, payoffDateField = 
     periodEnd: new Date(coveredYear, coveredMonth, getDaysInMonth(coveredYear, coveredMonth))
   };
 
-  // Check if this is the first month invoice
+  // Check if this is the first month invoice.
+  // Derived purely from the fund date vs the covered month so that regenerating
+  // an invoice produces identical numbers every time. Do NOT gate this on
+  // firstInvoiceGeneratedAt: that flag is written during generation, so a rerun
+  // would silently drop the proration and bill a full month.
   const fundDate = loan[fundDateField];
-  if (fundDate && !loan.firstInvoiceGeneratedAt) {
+  if (fundDate) {
     const fund = new Date(fundDate);
     const fundYear = fund.getFullYear();
     const fundMonth = fund.getMonth();
@@ -815,12 +819,12 @@ async function processBusiness(browser, businessName, invoiceDate, logoBase64) {
     // Send email to ALL users with this business name
     const users = await getUserEmails(businessName, 'client');
     const successfulRecipients = [];
+    let emailsSent = 0;
+    let emailsFailed = 0;
 
     if (users.length > 0) {
       console.log(`  → Sending invoice emails to ${users.length} recipient(s)...`);
 
-      let emailsSent = 0;
-      let emailsFailed = 0;
       const allRecipients = [];
 
       for (const user of users) {
@@ -871,7 +875,13 @@ async function processBusiness(browser, businessName, invoiceDate, logoBase64) {
       console.log(`  ⚠ No email found for ${businessName}`);
     }
 
-    return { success: true, emailSent: users.length > 0, recipients: successfulRecipients };
+    return {
+      success: true,
+      emailsSent,
+      emailsFailed,
+      noEmail: users.length === 0,
+      recipients: successfulRecipients
+    };
   } catch (error) {
     console.error(`✗ Failed to process business ${businessName}:`, error.message);
     return { success: false, error: error.message };
@@ -1110,12 +1120,12 @@ async function processInvestor(browser, investorName, invoiceDate, logoBase64) {
     // Send email to ALL users with this investor name
     const users = await getUserEmails(investorName, 'investor');
     const successfulRecipients = [];
+    let emailsSent = 0;
+    let emailsFailed = 0;
 
     if (users.length > 0) {
       console.log(`  → Sending invoice emails to ${users.length} recipient(s)...`);
 
-      let emailsSent = 0;
-      let emailsFailed = 0;
       const allRecipients = [];
 
       for (const user of users) {
@@ -1166,7 +1176,13 @@ async function processInvestor(browser, investorName, invoiceDate, logoBase64) {
       console.log(`  ⚠ No email found for ${investorName}`);
     }
 
-    return { success: true, emailSent: users.length > 0, recipients: successfulRecipients };
+    return {
+      success: true,
+      emailsSent,
+      emailsFailed,
+      noEmail: users.length === 0,
+      recipients: successfulRecipients
+    };
   } catch (error) {
     console.error(`✗ Failed to process investor ${investorName}:`, error.message);
     return { success: false, error: error.message };
@@ -1404,12 +1420,12 @@ async function processCapInvestor(browser, investorName, invoiceDate, logoBase64
     // Send email to ALL users with this investor name
     const users = await getUserEmails(investorName, 'capinvestor');
     const successfulRecipients = [];
+    let emailsSent = 0;
+    let emailsFailed = 0;
 
     if (users.length > 0) {
       console.log(`  → Sending invoice emails to ${users.length} recipient(s)...`);
 
-      let emailsSent = 0;
-      let emailsFailed = 0;
       const allRecipients = [];
 
       for (const user of users) {
@@ -1460,7 +1476,13 @@ async function processCapInvestor(browser, investorName, invoiceDate, logoBase64
       console.log(`  ⚠ No email found for ${investorName}`);
     }
 
-    return { success: true, emailSent: users.length > 0, recipients: successfulRecipients };
+    return {
+      success: true,
+      emailsSent,
+      emailsFailed,
+      noEmail: users.length === 0,
+      recipients: successfulRecipients
+    };
   } catch (error) {
     console.error(`✗ Failed to process cap investor ${investorName}:`, error.message);
     return { success: false, error: error.message };
@@ -1710,6 +1732,18 @@ async function main() {
     process.exit(1);
   }
 
+  // Verify Gmail credentials up front. Without this, an expired refresh token
+  // is only discovered once per recipient, after every PDF has been generated.
+  console.log('Verifying email credentials...');
+  const emailCheck = await verifyEmailCredentials();
+  if (!emailCheck.success) {
+    console.error(`✗ Gmail credentials are not valid: ${emailCheck.error}`);
+    console.error('  Invoices would be generated but no email could be delivered.');
+    console.error('  Refresh EMAIL_REFRESH_TOKEN in the backend environment and restart, then try again.');
+    throw new Error(`Gmail credentials are not valid: ${emailCheck.error}`);
+  }
+  console.log(`✓ Email credentials valid (sending as ${emailCheck.mailbox})`);
+
   // Use first of current month as invoice date (Eastern Time)
   // Get current date in Eastern timezone
   const nowET = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
@@ -1768,9 +1802,9 @@ async function main() {
       const result = await processBusiness(browser, business.business_name, invoiceDate, logoBase64);
       if (result.success) {
         stats.clients.processed++;
-        if (result.emailSent === true) {
-          stats.clients.emailsSent++;
-        } else if (result.emailSent === false) {
+        stats.clients.emailsSent += result.emailsSent;
+        stats.clients.emailsFailed += result.emailsFailed;
+        if (result.noEmail) {
           stats.clients.noEmail++;
         }
         // Collect recipients for summary report
@@ -1804,9 +1838,9 @@ async function main() {
       const result = await processInvestor(browser, investor.investor_name, invoiceDate, logoBase64);
       if (result.success) {
         stats.investors.processed++;
-        if (result.emailSent === true) {
-          stats.investors.emailsSent++;
-        } else if (result.emailSent === false) {
+        stats.investors.emailsSent += result.emailsSent;
+        stats.investors.emailsFailed += result.emailsFailed;
+        if (result.noEmail) {
           stats.investors.noEmail++;
         }
         // Collect recipients for summary report
@@ -1837,9 +1871,9 @@ async function main() {
       const result = await processCapInvestor(browser, capInvestor.investor_name, invoiceDate, logoBase64);
       if (result.success) {
         stats.capinvestors.processed++;
-        if (result.emailSent === true) {
-          stats.capinvestors.emailsSent++;
-        } else if (result.emailSent === false) {
+        stats.capinvestors.emailsSent += result.emailsSent;
+        stats.capinvestors.emailsFailed += result.emailsFailed;
+        if (result.noEmail) {
           stats.capinvestors.noEmail++;
         }
         // Collect recipients for summary report
@@ -1870,19 +1904,23 @@ async function main() {
   console.log('Invoice Generation Complete');
   console.log('='.repeat(80));
   console.log(`Clients:       ${stats.clients.processed} processed, ${stats.clients.failed} failed`);
-  console.log(`               ${stats.clients.emailsSent} emails sent, ${stats.clients.noEmail} no email found`);
+  console.log(`               ${stats.clients.emailsSent} emails sent, ${stats.clients.emailsFailed} failed to send, ${stats.clients.noEmail} no email found`);
   console.log(`Investors:     ${stats.investors.processed} processed, ${stats.investors.failed} failed`);
-  console.log(`               ${stats.investors.emailsSent} emails sent, ${stats.investors.noEmail} no email found`);
+  console.log(`               ${stats.investors.emailsSent} emails sent, ${stats.investors.emailsFailed} failed to send, ${stats.investors.noEmail} no email found`);
   console.log(`Cap Investors: ${stats.capinvestors.processed} processed, ${stats.capinvestors.failed} failed`);
-  console.log(`               ${stats.capinvestors.emailsSent} emails sent, ${stats.capinvestors.noEmail} no email found`);
+  console.log(`               ${stats.capinvestors.emailsSent} emails sent, ${stats.capinvestors.emailsFailed} failed to send, ${stats.capinvestors.noEmail} no email found`);
   console.log('='.repeat(80));
 
   const totalProcessed = stats.clients.processed + stats.investors.processed + stats.capinvestors.processed;
   const totalFailed = stats.clients.failed + stats.investors.failed + stats.capinvestors.failed;
   const totalEmailsSent = stats.clients.emailsSent + stats.investors.emailsSent + stats.capinvestors.emailsSent;
+  const totalEmailsFailed = stats.clients.emailsFailed + stats.investors.emailsFailed + stats.capinvestors.emailsFailed;
   const totalNoEmail = stats.clients.noEmail + stats.investors.noEmail + stats.capinvestors.noEmail;
   console.log(`TOTAL: ${totalProcessed} successful, ${totalFailed} failed`);
-  console.log(`EMAILS: ${totalEmailsSent} sent, ${totalNoEmail} no email found`);
+  console.log(`EMAILS: ${totalEmailsSent} sent, ${totalEmailsFailed} failed to send, ${totalNoEmail} no email found`);
+  if (totalEmailsFailed > 0) {
+    console.error(`⚠ ${totalEmailsFailed} email(s) failed to send — invoices were generated but not delivered`);
+  }
 
   // Return results instead of exiting (so we don't kill the server when called from API)
   return {
